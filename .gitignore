@@ -24,3 +24,7 @@ data/
 coverage.xml
 .env.*
 !.env.example
+# Личные учебные материалы и черновики не входят в исходники команды.
+/docs/DOCKER_GUIDE.md
+/docs/PR_DESCRIPTION.md
+/docs/local/

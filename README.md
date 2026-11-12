@@ -10,8 +10,8 @@ docker compose up --build --wait
 
 Открыть http://localhost:8000. Первый запуск без `.env` работает с явной заглушкой
 ядра. Аккаунты, история и заявки сохраняются в Docker volume. Ключи Qwen и база
-знаний для проверки backend не нужны. Подробности: [Docker](docs/DOCKER_GUIDE.md),
-[инструкции backend](docs/BACKEND.md), [описание PR](docs/PR_DESCRIPTION.md).
+знаний для проверки backend не нужны. Подробности: [инструкции backend](docs/BACKEND.md)
+и [результаты проверки Docker](docs/DOCKER_VERIFICATION.md).
 
 Каталог `core/` из командного main сохранён. Backend-заглушка заменена версией
 с аккаунтами и заявками. `backend.main:create_app` и `python run.py` запускают
