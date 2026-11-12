@@ -6,6 +6,10 @@
  * прежнее согласие становится недействительным — поэтому галочку согласия
  * сбрасываем после каждого сохранения и подтверждаем именно показанную версию.
  *
+ * Поля проверяются до отправки по тем же ограничениям, что и в backend, а ответ 422
+ * раскладывается обратно по полям: пользователь видит подсказку рядом с нужным
+ * полем, а не текст валидатора. Введённое при ошибке не теряется.
+ *
  * Отказ от заявки и незаполненная форма не мешают продолжать консультацию.
  * Реальной отправки в CRM или менеджеру нет: говорим «заявка создана», не обещая
  * звонка, срока и имени специалиста.
@@ -14,8 +18,10 @@
 import { useEffect, useState } from 'react'
 import { ApiError, api } from '../api/client'
 import type { Application } from '../api/types'
-import { describeError } from '../lib/errors'
+import { describeError, fieldErrors as parseFieldErrors } from '../lib/errors'
 import { formatDateTime } from '../lib/format'
+import { FIELD_ORDER, validateApplication } from '../lib/validation'
+import type { FieldErrors, FieldName } from '../lib/validation'
 
 export type LeadStage = 'hidden' | 'offer' | 'form' | 'review' | 'created'
 
@@ -30,12 +36,7 @@ type Props = {
   onSessionExpired: () => void
 }
 
-type Fields = {
-  full_name: string
-  phone: string
-  company: string
-  summary: string
-}
+type Fields = Record<FieldName, string>
 
 const EMPTY: Fields = { full_name: '', phone: '', company: '', summary: '' }
 
@@ -49,11 +50,13 @@ export default function LeadPanel({
   onSessionExpired,
 }: Props) {
   const [fields, setFields] = useState<Fields>(EMPTY)
+  const [invalid, setInvalid] = useState<FieldErrors>({})
   const [consent, setConsent] = useState(false)
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
 
   // При открытии формы подставляем сохранённую карточку, иначе — черновик резюме.
+  // Уже введённый текст не затираем: иначе правка после ошибки теряла бы данные.
   useEffect(() => {
     if (stage !== 'form') return
     setFields((current) => {
@@ -64,8 +67,16 @@ export default function LeadPanel({
     })
   }, [stage, card, summaryDraft])
 
-  function update(key: keyof Fields, value: string) {
+  function update(key: FieldName, value: string) {
     setFields((current) => ({ ...current, [key]: value }))
+    // Подсказку убираем сразу, как только поле начали исправлять.
+    setInvalid((current) => (current[key] ? { ...current, [key]: undefined } : current))
+  }
+
+  /** Фокус на первое поле с ошибкой: иначе её можно не заметить в длинной форме. */
+  function focusFirstInvalid(errors: FieldErrors) {
+    const name = FIELD_ORDER.find((field) => errors[field])
+    if (name) document.getElementById(`lead-${name}`)?.focus()
   }
 
   function handleFailure(caught: unknown) {
@@ -79,8 +90,18 @@ export default function LeadPanel({
   async function save(event: React.FormEvent) {
     event.preventDefault()
     if (busy) return
+
+    const found = validateApplication(fields)
+    if (Object.keys(found).length > 0) {
+      setInvalid(found)
+      setError('')
+      focusFirstInvalid(found)
+      return
+    }
+
     setBusy(true)
     setError('')
+    setInvalid({})
     try {
       const saved = await api.saveApplication(dialogId, {
         full_name: fields.full_name.trim(),
@@ -93,7 +114,15 @@ export default function LeadPanel({
       setConsent(false)
       onStage('review')
     } catch (caught) {
-      handleFailure(caught)
+      // Если backend указал конкретные поля, показываем подсказки рядом с ними,
+      // а форму оставляем заполненной.
+      const fromServer = parseFieldErrors(caught)
+      if (Object.keys(fromServer).length > 0) {
+        setInvalid(fromServer)
+        focusFirstInvalid(fromServer)
+      } else {
+        handleFailure(caught)
+      }
     } finally {
       setBusy(false)
     }
@@ -150,6 +179,24 @@ export default function LeadPanel({
   }
 
   if (stage === 'form') {
+    /** Общие атрибуты поля: красная рамка и связь подсказки с полем для скринридера. */
+    const fieldProps = (name: FieldName) => ({
+      id: `lead-${name}`,
+      className: invalid[name] ? 'input-invalid' : undefined,
+      'aria-invalid': invalid[name] ? true : undefined,
+      'aria-describedby': invalid[name] ? `lead-${name}-error` : undefined,
+      value: fields[name],
+      onChange: (event: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) =>
+        update(name, event.target.value),
+    })
+
+    const hint = (name: FieldName) =>
+      invalid[name] ? (
+        <span className="field-error" id={`lead-${name}-error`} role="alert">
+          {invalid[name]}
+        </span>
+      ) : null
+
     return (
       <section className="lead" aria-label="Форма заявки">
         <div className="lead-head">
@@ -163,50 +210,37 @@ export default function LeadPanel({
           Иванов Пётр Сергеевич, +7 900 000-00-01, ООО «Тестовая компания».
         </p>
 
-        <form className="form" onSubmit={save}>
+        {/* noValidate: подсказки показываем своими словами, а не сообщениями браузера. */}
+        <form className="form" onSubmit={save} noValidate>
           <label className="field">
             <span className="field-label">ФИО</span>
-            <input
-              value={fields.full_name}
-              onChange={(event) => update('full_name', event.target.value)}
-              minLength={2}
-              maxLength={200}
-              required
-              placeholder="Иванов Пётр Сергеевич"
-            />
+            <input {...fieldProps('full_name')} placeholder="Иванов Пётр Сергеевич" />
+            {hint('full_name')}
           </label>
           <label className="field">
             <span className="field-label">Телефон</span>
-            <input
-              type="tel"
-              value={fields.phone}
-              onChange={(event) => update('phone', event.target.value)}
-              required
-              placeholder="+7 900 000-00-01"
-            />
-            <span className="field-hint">От 7 до 15 цифр, допустимы +, пробелы, скобки и дефисы.</span>
+            <input {...fieldProps('phone')} type="tel" placeholder="+7 900 000-00-01" />
+            {hint('phone') ?? (
+              <span className="field-hint">
+                От 7 до 15 цифр, допустимы +, пробелы, скобки и дефисы.
+              </span>
+            )}
           </label>
           <label className="field">
             <span className="field-label">Компания</span>
-            <input
-              value={fields.company}
-              onChange={(event) => update('company', event.target.value)}
-              maxLength={300}
-              required
-              placeholder="ООО «Тестовая компания»"
-            />
+            <input {...fieldProps('company')} placeholder="ООО «Тестовая компания»" />
+            {hint('company')}
           </label>
           <label className="field">
             <span className="field-label">Резюме для менеджера</span>
-            <textarea
-              className="lead-summary"
-              value={fields.summary}
-              onChange={(event) => update('summary', event.target.value)}
-              maxLength={10000}
-              required
-              rows={6}
-            />
-            <span className="field-hint">Черновик можно отредактировать: менеджер увидит именно этот текст.</span>
+            <textarea {...fieldProps('summary')} className={
+              invalid.summary ? 'lead-summary input-invalid' : 'lead-summary'
+            } maxLength={10000} rows={6} />
+            {hint('summary') ?? (
+              <span className="field-hint">
+                Черновик можно отредактировать: менеджер увидит именно этот текст.
+              </span>
+            )}
           </label>
 
           {error ? <p className="form-error" role="alert">{error}</p> : null}

@@ -140,6 +140,19 @@ h2 {
   outline: none;
 }
 
+/* Поле с ошибкой: рамка и фон, подсказка стоит прямо под ним. */
+.field input.input-invalid,
+.field textarea.input-invalid {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.field-error {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--accent-dark);
+}
+
 .form-error {
   margin: 0;
   color: var(--accent-dark);
