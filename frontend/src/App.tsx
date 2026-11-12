@@ -16,12 +16,36 @@ import StaffScreen from './components/StaffScreen'
 
 export type Screen = 'chat' | 'archive' | 'staff'
 
+const DEBUG_KEY = 'energytool.debug'
+
+/**
+ * Режим отладки запоминаем в браузере: во время приёмки и показа страница
+ * перезагружается часто, и включать переключатель каждый раз неудобно.
+ * Хранилище может быть недоступно (приватное окно, запрет данных сайта),
+ * поэтому любое обращение к нему защищено.
+ */
+function readDebugPreference(): boolean {
+  try {
+    return localStorage.getItem(DEBUG_KEY) === '1'
+  } catch {
+    return false
+  }
+}
+
+function writeDebugPreference(value: boolean): void {
+  try {
+    localStorage.setItem(DEBUG_KEY, value ? '1' : '0')
+  } catch {
+    // Настройка не сохранится, но интерфейс должен продолжить работу.
+  }
+}
+
 export default function App() {
   const [user, setUser] = useState<User | null>(null)
   const [checked, setChecked] = useState(false)
   const [health, setHealth] = useState<Health | null>(null)
   const [screen, setScreen] = useState<Screen>('chat')
-  const [debug, setDebug] = useState(false)
+  const [debug, setDebug] = useState(readDebugPreference)
   /** Счётчик заставляет чат перезагрузиться после возврата из архива. */
   const [chatKey, setChatKey] = useState(0)
 
@@ -35,6 +59,11 @@ export default function App() {
       .catch(() => undefined)
       .finally(() => setChecked(true))
     api.health().then(setHealth).catch(() => undefined)
+  }, [])
+
+  const handleDebug = useCallback((value: boolean) => {
+    setDebug(value)
+    writeDebugPreference(value)
   }, [])
 
   const handleSignedIn = useCallback((result: { user: User; csrf_token: string }) => {
@@ -79,7 +108,7 @@ export default function App() {
         screen={screen}
         onScreen={setScreen}
         debug={debug}
-        onDebug={setDebug}
+        onDebug={handleDebug}
         onLogout={handleLogout}
         stub={health?.core_mode === 'stub'}
       />

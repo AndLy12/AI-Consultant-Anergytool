@@ -40,7 +40,7 @@ function buildSummaryFallback(messages: Message[]): string {
     .filter((message) => message.role === 'user' && message.status !== 'failed')
     .map((message) => message.content.trim())
   if (lines.length === 0) return ''
-  return `Запрос клиента: ${lines.join(' ')}`.slice(0, 4000)
+  return `Запрос клиента:\n${lines.join('\n')}`.slice(0, 4000)
 }
 
 export default function ChatScreen({ debug, onSessionExpired }: Props) {
