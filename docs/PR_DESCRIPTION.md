@@ -95,12 +95,18 @@ docker compose up --wait
 python scripts/docker_smoke.py
 ```
 
-## Статус проверок при подготовке описания
+## Результаты проверок
 
 - [x] Предыдущий полный набор: 49 тестов успешно прошли локально.
 - [x] Предыдущие CI скрипта на Python 3.10/3.12 и backend на SQLite/PostgreSQL прошли.
-- [ ] Новый Docker clean-start workflow: дождаться результата для коммита PR.
-- [ ] Перед слиянием проверить актуальные результаты всех CI в этом PR.
+- [x] Новый Docker clean-start workflow успешно выполнен для коммита `5619eb9`.
+- [x] Все три workflow этого коммита завершились успешно: Docker, backend, скрипт.
+
+[Docker clean start](https://github.com/AndLy12/AI-Consultant-Anergytool/actions/runs/43258658592)
+проверил реальную сборку образа без кеша и сохранность данных при пересоздании
+контейнера. [Backend CI](https://github.com/AndLy12/AI-Consultant-Anergytool/actions/runs/43258658515)
+и [Project checks](https://github.com/AndLy12/AI-Consultant-Anergytool/actions/runs/43258658459)
+тоже прошли. Если в PR появятся новые изменения кода, результаты нужно проверить повторно.
 
 Docker Engine на рабочем Mac отсутствует, поэтому новый контейнер проверяется
 в GitHub CI, а не выдаётся за проверенный локально.
