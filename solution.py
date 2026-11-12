@@ -328,11 +328,15 @@ def generate_answer(
                 request, timeout=settings.timeout_seconds
             ) as response:
                 body = json.loads(response.read().decode("utf-8"))
-            answer = body["choices"][0]["message"]["content"].strip()
+            content = body["choices"][0]["message"]["content"]
+            # Некорректный JSON модели обрабатывается как сбой запроса, а не падение всей пачки.
+            if not isinstance(content, str):
+                raise ValueError("LLM answer content must be a string")
+            answer = content.strip()
             if answer:
                 return answer[:10_000]
             raise ValueError("LLM returned an empty answer")
-        except (urllib.error.URLError, urllib.error.HTTPError, KeyError, ValueError) as exc:
+        except (urllib.error.URLError, OSError, KeyError, IndexError, TypeError, ValueError) as exc:
             last_error = exc
             if attempt < settings.max_retries:
                 time.sleep(2**attempt)
