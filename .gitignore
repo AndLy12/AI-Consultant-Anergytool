@@ -24,3 +24,7 @@ data/
 coverage.xml
 .env.*
 !.env.example
+submission*.csv
+*.report.json
+work/
+*.tmp

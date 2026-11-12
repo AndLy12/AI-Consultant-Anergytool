@@ -1,8 +1,8 @@
 FROM python:3.12-slim
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
 WORKDIR /app
-COPY requirements-web.txt .
-RUN pip install --no-cache-dir -r requirements-web.txt && useradd --uid 10001 --create-home app && mkdir /data && chown app:app /data
+COPY requirements-web.txt requirements-core-web.txt ./
+RUN pip install --no-cache-dir -r requirements-core-web.txt && useradd --uid 10001 --create-home app && mkdir /data && chown app:app /data
 COPY backend backend
 COPY core core
 COPY migrations migrations

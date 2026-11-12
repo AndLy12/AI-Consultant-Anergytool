@@ -6,6 +6,10 @@ import unittest
 from pathlib import Path
 
 import solution
+from consultant_core import create_core
+from core.config import Settings as CoreSettings
+from core.demo import demo_chunks
+from core.retrieval import SearchIndex
 
 
 class SolutionTest(unittest.TestCase):
@@ -26,12 +30,9 @@ class SolutionTest(unittest.TestCase):
                 data_dir=data_dir,
                 questions_path=questions_path,
                 output_path=output_path,
-                llm_base_url="",
-                llm_api_key="",
-                llm_model="",
             )
 
-            processed = solution.run(settings)
+            processed = solution.run(settings, create_core(CoreSettings(data_dir=data_dir, demo=True)))
 
             self.assertEqual(processed, 2)
             with output_path.open(encoding="utf-8", newline="") as handle:
@@ -50,8 +51,8 @@ class SolutionTest(unittest.TestCase):
                 solution.load_questions(path)
 
     def test_retrieve_returns_empty_for_unrelated_question(self) -> None:
-        knowledge = [solution.SearchResult("source", "Настройка уведомлений", 0.0)]
-        self.assertEqual(solution.retrieve("Прогноз погоды", knowledge), [])
+        index = SearchIndex(demo_chunks(1800))
+        self.assertEqual(index.search("Прогноз погоды"), ())
 
     def test_explicit_questions_scope_knowledge_to_input_directory(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
