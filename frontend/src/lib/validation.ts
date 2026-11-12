@@ -32,6 +32,30 @@ const LIMITS = {
 /** Backend допускает цифры, пробелы, скобки, дефис и плюс в начале номера. */
 const PHONE_ALLOWED = /^\+?[\d\s()-]+$/
 
+/**
+ * Состав ФИО: буквы русского и латинского алфавита, пробел, дефис, точка
+ * и апостроф (оба написания, прямое и типографское). Это ограничение интерфейса:
+ * backend проверяет только длину, но цифры и знаки в имени — почти всегда опечатка.
+ * Число слов не ограничиваем: встречаются имена без отчества и двойные фамилии.
+ */
+const NAME_ALLOWED = /^[A-Za-zА-Яа-яЁё\s.'’-]+$/
+const NAME_LETTER = /[A-Za-zА-Яа-яЁё]/g
+
+function checkFullName(value: string): string | undefined {
+  if (!value) return 'Укажите имя и фамилию'
+  if (value.length > LIMITS.full_name.max) {
+    return `Слишком длинный текст: не больше ${LIMITS.full_name.max} символов`
+  }
+  if (/\d/.test(value)) return 'В ФИО не должно быть цифр'
+  if (!NAME_ALLOWED.test(value)) {
+    return 'Допустимы только буквы, пробел, дефис, точка и апостроф'
+  }
+  if ((value.match(NAME_LETTER) ?? []).length < LIMITS.full_name.min) {
+    return `Слишком короткое значение: нужно не меньше ${LIMITS.full_name.min} букв`
+  }
+  return undefined
+}
+
 function checkPhone(value: string): string | undefined {
   if (!value) return 'Укажите телефон, например +7 900 000-00-01'
   if (value.length > LIMITS.phone.maxLength) {
@@ -48,7 +72,7 @@ function checkPhone(value: string): string | undefined {
 }
 
 function checkText(
-  name: 'full_name' | 'company' | 'summary',
+  name: 'company' | 'summary',
   value: string,
   empty: string,
 ): string | undefined {
@@ -64,7 +88,7 @@ function checkText(
 /** Значения проверяем уже обрезанными: backend обрезает пробелы сам. */
 export function validateApplication(values: Record<FieldName, string>): FieldErrors {
   const errors: FieldErrors = {}
-  const fullName = checkText('full_name', values.full_name.trim(), 'Укажите фамилию, имя и отчество')
+  const fullName = checkFullName(values.full_name.trim())
   if (fullName) errors.full_name = fullName
 
   const phone = checkPhone(values.phone.trim())

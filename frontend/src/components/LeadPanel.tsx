@@ -215,7 +215,9 @@ export default function LeadPanel({
           <label className="field">
             <span className="field-label">ФИО</span>
             <input {...fieldProps('full_name')} placeholder="Иванов Пётр Сергеевич" />
-            {hint('full_name')}
+            {hint('full_name') ?? (
+              <span className="field-hint">Отчество указывать не обязательно.</span>
+            )}
           </label>
           <label className="field">
             <span className="field-label">Телефон</span>

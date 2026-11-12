@@ -41,6 +41,35 @@ run.step('фокус переведён на первое поле с ошибк
 run.step('карточка не ушла на проверку', (await page.locator('.consent').count()) === 0)
 await run.shot(page, '16-validation-empty')
 
+// --- ФИО: только буквы и знаки имени (дефект UI-002) ---
+const submit = () => page.getByRole('button', { name: 'Проверить карточку' }).click()
+
+await input('full_name').fill('Иванов 2')
+await submit()
+await page.waitForSelector('#lead-full_name-error')
+run.step('цифры в ФИО отклонены', (await error('full_name').textContent()).includes('не должно быть цифр'))
+await run.shot(page, '17-validation-name')
+
+await input('full_name').fill('Иванов #Пётр')
+await submit()
+await page.waitForSelector('#lead-full_name-error')
+run.step(
+  'посторонние знаки в ФИО отклонены',
+  (await error('full_name').textContent()).includes('Допустимы только буквы'),
+)
+
+await input('full_name').fill('И')
+await submit()
+await page.waitForSelector('#lead-full_name-error')
+run.step('одна буква в ФИО отклонена', (await error('full_name').textContent()).includes('не меньше 2 букв'))
+
+// Дефис и апостроф допустимы: проверяем по отсутствию подсказки именно у ФИО,
+// пока остальные поля ещё пустые и подсвечены своими ошибками.
+await input('full_name').fill('Жанна д’Арк-Петрова')
+await submit()
+await page.waitForSelector('#lead-company-error')
+run.step('дефис и апостроф в ФИО допустимы', (await error('full_name').count()) === 0)
+
 // --- Неверный телефон: именно случай из дефекта ---
 await input('full_name').fill('Иванов Пётр Сергеевич')
 await input('company').fill('ООО «Тестовая компания»')
@@ -112,11 +141,16 @@ const conflict = await page.locator('.form-error').textContent()
 run.step('409 объяснён по-русски', conflict.includes('Заявка уже создана'))
 run.step('в тексте 409 нет английского', !/[A-Za-z]{4,}/.test(conflict), conflict)
 
-// --- Сохранение проходит после снятия подмены ---
+// --- Сохранение проходит после снятия подмены; ФИО без отчества принимается ---
 await page.unroute('**/api/dialogs/*/application')
+await input('full_name').fill('Иванов Пётр')
 await page.getByRole('button', { name: 'Проверить карточку' }).click()
 await page.waitForSelector('.consent', { timeout: 15000 })
-run.step('исправленная форма сохраняется', true)
+run.step('ФИО из двух слов принимается', true)
+run.step(
+  'в карточку попало введённое ФИО',
+  (await page.locator('.lead-card').textContent()).includes('Иванов Пётр'),
+)
 
 await browser.close()
 run.finish()
