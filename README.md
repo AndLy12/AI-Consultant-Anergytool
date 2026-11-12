@@ -1,5 +1,20 @@
 # AI Consultant for Energytool
 
+## Backend роли 1
+
+Запуск веб-прототипа: [docs/BACKEND.md](docs/BACKEND.md).
+Решения: [docs/DECISIONS.md](docs/DECISIONS.md).
+Коллеге по роли 2: [docs/CORE_INTEGRATION.md](docs/CORE_INTEGRATION.md).
+Статус: [docs/ROLE1_STATUS.md](docs/ROLE1_STATUS.md).
+
+Реализованы аккаунты, история с разных устройств, API диалогов, подтверждение
+карточки заявки, доступ сотрудника, миграции и проверочный интерфейс.
+Ядро коллеги ещё не подключено. `CORE_MODE=stub` включает явную заглушку для
+проверки backend, а не RAG-консультанта.
+
+Ниже описан ранний solution.py — заготовка роли 2, не принятый платформой сабмит.
+requirements.txt относится к нему; веб-зависимости — requirements-web.txt.
+
 Воспроизводимый baseline первого этапа: решение читает вопросы, извлекает
 релевантные фрагменты базы знаний, при наличии настроек обращается к
 OpenAI-совместимой модели и создаёт `submission.csv`.
@@ -63,4 +78,3 @@ python solution.py --questions examples/questions.csv --output /tmp/submission.c
 
 Архитектурные границы для параллельной работы описаны в
 [`ARCHITECTURE.md`](ARCHITECTURE.md), а текущая доска — в [`TASKS.md`](TASKS.md).
-

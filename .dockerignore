@@ -1,0 +1,11 @@
+.git
+.venv
+.env
+.idea
+__pycache__
+Данные
+*.pdf
+*.zip
+*.db*
+tests
+.github

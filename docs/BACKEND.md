@@ -1,0 +1,106 @@
+# Backend роли 1
+
+## Локальный запуск
+
+Python 3.12+. Из корня репозитория:
+
+```bash
+source .venv/bin/activate
+pip install -r requirements-web.txt
+export DATABASE_URL=sqlite:///./energytool.db
+alembic upgrade head
+CORE_MODE=stub uvicorn backend.app:create_app --factory --host 127.0.0.1 --port 8000
+```
+
+Открыть http://localhost:8000. Зарегистрироваться, создать диалог, отправить
+сообщение, сохранить карточку, проверить её и подтвердить с вымышленными контактами.
+Stub явно сообщает, что реальное ядро не подключено. OpenAPI: `/docs`, health: `/health`.
+
+## Docker
+
+Скопировать `.env.example` в `.env`, для проверки backend задать `CORE_MODE=stub`:
+
+```bash
+docker compose up --build
+```
+
+Порт 8000 привязан к 127.0.0.1, SQLite хранится в постоянном volume app-data.
+Обычный `docker compose down` сохраняет базу; `down -v` удаляет том с данными.
+Миграции применяются перед запуском. Docker-запуск требует отдельной проверки:
+на текущем ПК Docker Engine отсутствует.
+
+## Аккаунты и сотрудники
+
+Пароли 10–128 символов, Argon2id. Cookie HttpOnly, SameSite=Lax, срок 7 дней.
+Для HTTPS задать COOKIE_SECURE=true и фактический APP_ORIGIN.
+Изменяющие запросы требуют X-CSRF-Token из register/login/me.
+API проверяет владельца, клиент не задаёт user_id или служебные роли.
+Email пока не подтверждается, восстановления пароля по почте нет — согласованное
+ограничение прототипа. Ограничитель register/login: 15 попыток/минуту на IP в
+одном процессе. Настройка доверенных proxy/IP выполняется при размещении.
+
+Проверяющий сначала регистрируется; затем роль назначается локальной командой:
+
+```bash
+python -m backend.manage grant-staff --email reviewer@example.test
+```
+
+В Docker: `docker compose exec backend python -m backend.manage grant-staff --email ...`.
+После обновления страницы появится раздел проверки всех диалогов и заявок.
+
+## API для frontend
+
+| Метод и путь | Назначение |
+| --- | --- |
+| POST `/api/auth/register`, `/api/auth/login` | `{email,password}` → user, csrf_token + cookie |
+| GET `/api/auth/me` | Аккаунт и CSRF-токен |
+| POST `/api/auth/logout` | Выход с текущего устройства |
+| POST / GET `/api/dialogs` | Новый чистый диалог / список своих |
+| GET `/api/dialogs/{id}` | Сообщения, источники и время |
+| POST `/api/dialogs/{id}/close` | Закрытие и архив |
+| POST `/api/dialogs/{id}/messages` | `{request_id: UUID, content}` → ответ |
+| PUT / GET `/api/dialogs/{id}/application` | Сохранение / чтение карточки |
+| POST `/api/dialogs/{id}/application/confirm` | `{version,consent:true}` → заявка |
+| GET `/api/staff/dialogs`, `/api/staff/dialogs/{id}` | Все диалоги для сотрудника |
+| GET `/api/staff/applications` | Все заявки для сотрудника |
+
+Карточка: full_name, phone, company, summary. PUT возвращает version.
+Устаревшее подтверждение: 409, отсутствие согласия: 422. Созданную заявку нельзя
+перезаписать черновиком. Контакты пока хранятся в заявке, отдельного редактируемого
+профиля с контактами нет; аккаунт содержит email и роль.
+
+Повтор request_id и текста возвращает сохранённый результат. Другой текст с тем
+же ID или одновременная генерация в том же диалоге: 409. При сбое ядра: 503,
+сообщение остаётся в истории как failed; новая попытка использует новый request_id.
+История для ядра содержит только завершённые обмены. Источники и время сохраняются.
+Произвольные исключения/секреты ядра клиенту не возвращаются.
+
+После аварийного завершения backend при старте отмечает прерванные запросы failed.
+Автоматического повторного обращения к модели нет. Текущая архитектура рассчитана
+на один backend-процесс/реплику. HTML из сообщений не исполняется: вывод textContent.
+
+## Замена БД
+
+Для пустой PostgreSQL задать
+`DATABASE_URL=postgresql+psycopg://USER:PASSWORD@HOST:5432/DATABASE`, затем
+`alembic upgrade head`. Драйвер уже установлен. Для сохранения данных SQLite
+нужна отдельная миграция данных с проверкой связей, ID и количества записей.
+Изменение URL само по себе данные не переносит.
+
+Файлы migrations/versions фиксируют схему независимо от текущих Python-моделей.
+`alembic check` проверяет рассогласование. Вместо create_all при старте применяем
+версии миграций. При изменении схемы добавляем новую миграцию.
+
+## Проверки
+
+```bash
+python -m unittest discover -s tests -v
+```
+
+Для PostgreSQL TEST_DATABASE_URL должен указывать только на отдельную одноразовую
+тестовую БД: тесты очищают таблицы и выполняют downgrade/upgrade. Рабочую БД
+передавать нельзя. `.github/workflows/backend.yml` запускает те же проверки на двух БД.
+
+Ограничения: ядро роли 2 не подключено; интерфейс проверочный; списки без пагинации;
+длинную историю ограничивает ядро (backend передаёт полный завершённый диалог).
+Регистрация без писем, МТС SSO и CRM пока отсутствуют.

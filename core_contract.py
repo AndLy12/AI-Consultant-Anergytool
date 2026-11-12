@@ -1,0 +1,50 @@
+"""Общий контракт v1 для backend и ядра; корневой файл включается в платформенный ZIP.
+
+Зависит только от Pydantic и стандартной библиотеки. Не импортирует веб-приложение
+или БД, поэтому solution.py может использовать его самостоятельно.
+"""
+from typing import Literal, Protocol
+from pydantic import BaseModel, ConfigDict, Field
+
+
+class ContractModel(BaseModel):
+    # Отклоняем неожиданные поля и строки из одних пробелов до сохранения результата.
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+
+class Turn(ContractModel):
+    """Реплика доверенной истории; публичный клиент не назначает роли самостоятельно."""
+    role: Literal["user", "assistant"]
+    content: str = Field(min_length=1, max_length=10000)
+
+
+class Source(ContractModel):
+    """Использованный фрагмент базы с устойчивыми ID, без абсолютных путей сервера."""
+    document_id: str = Field(min_length=1, max_length=200)
+    chunk_id: str = Field(min_length=1, max_length=200)
+    title: str = Field(min_length=1, max_length=500)
+    excerpt: str = Field(min_length=1, max_length=4000)
+
+
+class CoreRequest(ContractModel):
+    # История не включает текущую реплику. Пароли, токены и права аккаунта сюда не входят.
+    message: str = Field(min_length=1, max_length=10000)
+    history: list[Turn] = Field(default_factory=list)
+
+
+class CoreResponse(ContractModel):
+    # action — подсказка для сценария, не разрешение на запись в БД.
+    # summary_draft нужно показать пользователю; он сам подтверждает итоговую заявку.
+    answer: str = Field(min_length=1, max_length=10000)
+    sources: list[Source] = Field(default_factory=list, max_length=30)
+    action: Literal["answer", "clarify", "out_of_scope", "offer_application"] = "answer"
+    summary_draft: str | None = Field(default=None, max_length=10000)
+
+
+class ConsultantCore(Protocol):
+    """Ядро не хранит контекст клиента между вызовами; история приходит в каждом запросе."""
+    def respond(self, request: CoreRequest) -> CoreResponse: ...
+
+
+class CoreUnavailable(Exception):
+    """Технический сбой ядра; сообщение исключения не должно содержать секретов."""

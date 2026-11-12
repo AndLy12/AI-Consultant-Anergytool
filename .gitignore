@@ -7,4 +7,10 @@ venv/
 submission.csv
 dist/
 *.zip
-
+.idea/
+*.db
+*.db-shm
+*.db-wal
+# Private case materials must not be published.
+Данные/
+/МТС_*.pdf
