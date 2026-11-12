@@ -78,6 +78,11 @@ id,answer
 
 ## Проверка
 
+**Всем участникам: [простая инструкция по тестам и CI](tests/README.md).**
+`Project checks` проверяет скрипт сабмита на Python 3.10 и 3.12, а
+`Backend SQLite and PostgreSQL` — полный проект на обеих БД.
+Сценарии ручной оценки: [tests/QUALITY_CASES.md](tests/QUALITY_CASES.md).
+
 ```bash
 python -m unittest discover -s tests -v
 python solution.py --questions examples/questions.csv --output /tmp/submission.csv
