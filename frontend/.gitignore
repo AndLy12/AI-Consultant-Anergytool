@@ -3,6 +3,7 @@ dist/
 .env
 .env.local
 *.local
+tests/shots/
 
 # Личные рабочие заметки участника, в общий репозиторий не публикуем.
 CLAUDE.md
