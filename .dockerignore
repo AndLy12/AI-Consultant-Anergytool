@@ -1,6 +1,11 @@
 .git
 .venv
 .env
+.env.*
+.git*
+.pytest_cache
+.coverage
+.run
 .idea
 __pycache__
 Данные
@@ -13,3 +18,7 @@ var
 data
 *.sqlite*
 *.log
+docs
+examples
+*.md
+scripts

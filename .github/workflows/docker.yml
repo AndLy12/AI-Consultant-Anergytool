@@ -1,0 +1,28 @@
+name: Docker clean start
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: docker-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  clean-start:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      # На хосте нет зависимостей приложения: они устанавливаются только в образ.
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Check Docker availability
+        run: |
+          docker version
+          docker compose version
+      - name: Build and test from clean checkout
+        run: python scripts/docker_smoke.py

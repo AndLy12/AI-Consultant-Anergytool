@@ -2,10 +2,34 @@ services:
   backend:
     build: .
     ports:
-      - "127.0.0.1:8000:8000"
-    env_file: .env
+      - "127.0.0.1:${APP_PORT:-8000}:8000"
+    # Compose сам читает .env для подстановок. Файл необязателен: чистая копия
+    # запускается с явной заглушкой, без ключей модели и исходной базы знаний.
+    environment:
+      DATABASE_URL: ${DATABASE_URL:-sqlite:////data/energytool.db}
+      CORE_MODE: ${CORE_MODE:-stub}
+      CORE_MODULE: ${CORE_MODULE:-consultant_core}
+      CORE_TIMEOUT_SECONDS: ${CORE_TIMEOUT_SECONDS:-120}
+      APP_ORIGIN: ${APP_ORIGIN:-http://localhost:8000}
+      COOKIE_SECURE: ${COOKIE_SECURE:-false}
+      LLM_BASE_URL: ${LLM_BASE_URL:-}
+      LLM_API_KEY: ${LLM_API_KEY:-}
+      LLM_MODEL: ${LLM_MODEL:-}
+      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_MODEL: ${OPENAI_MODEL:-}
+      GEN_MODEL: ${GEN_MODEL:-}
+      DATA_DIR: ${DATA_DIR:-/knowledge}
+    # Состояние БД живёт вне удаляемого контейнера.
     volumes:
       - app-data:/data
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3).read()"]
+      interval: 5s
+      timeout: 4s
+      retries: 12
+      start_period: 15s
+    stop_grace_period: 15s
 volumes:
   app-data:
