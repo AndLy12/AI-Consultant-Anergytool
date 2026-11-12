@@ -11,7 +11,7 @@ dist/
 *.db
 *.db-shm
 *.db-wal
-# Private case materials must not be published.
+# Закрытые материалы кейса не должны попадать в публичный репозиторий.
 Данные/
 /МТС_*.pdf
 var/

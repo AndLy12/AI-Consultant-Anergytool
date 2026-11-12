@@ -1,1 +1,1 @@
-"""Shared contracts. No HTTP server, database, or web session dependencies."""
+"""Общие интерфейсы ядра без зависимости от HTTP-сервера, БД и веб-сессий."""

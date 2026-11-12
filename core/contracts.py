@@ -10,9 +10,10 @@ class Message:
 
 class Consultant(Protocol):
     async def answer(self, history: tuple[Message, ...]) -> dict:
-        """Return an untrusted answer object; history ends with current user text.
+        """Возвращает ответ, который приложение обязано проверить перед использованием.
 
-        No cookies, session credentials, environment or database handles are passed.
-        An implementation must be usable from a standalone CSV adapter too.
+        Последняя реплика истории — текущее сообщение пользователя. Cookie, данные
+        сессии, окружение сервера и соединения с БД сюда не передаются. Реализация
+        должна работать и в самостоятельном CSV-адаптере, без запущенного веба.
         """
         ...

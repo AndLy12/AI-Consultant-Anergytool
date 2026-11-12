@@ -1,5 +1,5 @@
-# To enable: place this file at .github/workflows/backend.yml.
-# Uploading an Actions workflow requires workflow permission in GitHub authentication.
+# Для включения поместите этот файл в .github/workflows/backend.yml.
+# Для загрузки сценария Actions авторизации GitHub требуется разрешение workflow.
 name: Backend checks
 on: [push, pull_request]
 permissions:
