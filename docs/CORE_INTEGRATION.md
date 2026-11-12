@@ -7,7 +7,7 @@
 `core_contract.py` — общий версионируемый интерфейс v1; изменения согласовываем
 между ролями. Отдельный HTTP-сервис для ядра не нужен.
 
-## Что должен предоставить коллега
+## Что должен предоставить Данёк
 
 Корневой модуль `consultant_core.py` с фабрикой `create_core()` без аргументов.
 Она читает серверное окружение, один раз загружает базу/индекс и возвращает
@@ -18,19 +18,19 @@
 from core_contract import CoreRequest, CoreResponse, CoreUnavailable
 
 def create_core():
-    return EnergytoolCore()  # initialize index and LLM client here
+    return EnergytoolCore()  # Здесь один раз готовятся индекс и клиент модели.
 
 class EnergytoolCore:
     def respond(self, request: CoreRequest) -> CoreResponse:
-        # request.history: ordered user/assistant turns, current message excluded
-        # retrieve using request.message and relevant history, call model
+        # request.history — упорядоченные реплики без текущего сообщения.
+        # Здесь выполняются поиск с учётом истории и вызов модели.
         return CoreResponse(
             answer="Ответ, основанный на найденных материалах",
             sources=[{
                 "document_id": "product-01", "chunk_id": "product-01:3",
                 "title": "Название документа", "excerpt": "Использованный фрагмент"
             }],
-            action="answer",  # or clarify, out_of_scope, offer_application
+            action="answer",  # Также: clarify, out_of_scope, offer_application.
             summary_draft=None,
         )
 ```
@@ -87,6 +87,15 @@ class EnergytoolCore:
 платформенном requirements.txt разрешённой версией.
 
 ## Интеграционная проверка
+
+До запуска веба проверяем загрузку модуля командой `python -m backend.check_core`.
+Она вызывает фабрику, но не генерирует ответ. Для проверки ответа:
+`python -m backend.check_core --message "Проверочный вопрос"`.
+Вторая команда обращается к настроенному ядру и может вызвать реальный API.
+Вывод содержит только статус, режим, длину ответа, число источников и время;
+ключи и содержимое ответа не печатаются. Код завершения 2 означает, что ядро
+отсутствует, не соответствует интерфейсу или вернуло невалидный результат.
+Проверка с `CORE_MODE=stub` проверяет только тестовую оболочку, не реальный RAG.
 
 1. Убедиться, что импорт ядра не запускает веб-сервер и не подключается к БД.
 2. Проверить `create_core()` на настоящей базе и своём Qwen API.
