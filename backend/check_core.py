@@ -19,12 +19,14 @@ def main(argv=None):
     parser.add_argument("--message", help="Проверить настоящий ответ на указанный текст")
     args = parser.parse_args(argv)
     started = time.monotonic()
+    core = None
     try:
         core = load_core()
         if isinstance(core, MissingCore):
             print(json.dumps({"status": "not_ready", "reason": "core_module_missing"}))
             return 2
         report = {"status": "ready", "mode": "stub" if isinstance(core, StubCore) else "real"}
+        report["demo"] = bool(getattr(getattr(core, "settings", None), "demo", False))
         if args.message is not None:
             # Валидация совпадает с той, которую backend применяет перед записью ответа.
             result = CoreResponse.model_validate(core.respond(CoreRequest(message=args.message)))
@@ -36,6 +38,11 @@ def main(argv=None):
         # Не печатаем исключение или traceback: они могут раскрыть настройки провайдера.
         print(json.dumps({"status": "not_ready", "reason": "core_initialization_or_response_invalid"}))
         return 2
+    finally:
+        # Проверка фабрики тоже владеет экземпляром ядра и освобождает его ресурсы.
+        close = getattr(core, "close", None)
+        if callable(close):
+            close()
 
 
 if __name__ == "__main__":

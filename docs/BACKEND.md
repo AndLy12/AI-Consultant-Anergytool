@@ -2,19 +2,21 @@
 
 ## Локальный запуск
 
-Python 3.12+. Из корня репозитория:
+Используйте Python 3.12 и согласованный lock ядра. В текущем checkout создана .venv-core:
 
 ```bash
-source .venv/bin/activate
-pip install -r requirements-web.txt
+source .venv-core/bin/activate
+pip install -r requirements-dev.txt
 export DATABASE_URL=sqlite:///./energytool.db
 alembic upgrade head
-CORE_MODE=stub uvicorn backend.app:create_app --factory --host 127.0.0.1 --port 8000
+CORE_MODE=real CORE_DEMO=true uvicorn backend.app:create_app --factory --host 127.0.0.1 --port 8000
 ```
 
 Открыть http://localhost:8000. Зарегистрироваться, создать диалог, отправить
 сообщение, сохранить карточку, проверить её и подтвердить с вымышленными контактами.
-Stub явно сообщает, что реальное ядро не подключено. OpenAPI: `/docs`, health: `/health`.
+В этом режиме работает ядро Данька с вымышленными материалами, без Qwen.
+CORE_MODE=stub возвращает прежнюю backend-заглушку. Режим виден в UI и /health.
+OpenAPI: `/docs`, health: `/health`.
 
 ## Docker
 
@@ -106,13 +108,13 @@ python -m backend.manage grant-staff --email reviewer@example.test
 ## Проверки
 
 ```bash
-python -m unittest discover -s tests -v
+python -m pytest -q
 ```
 
 Для PostgreSQL TEST_DATABASE_URL должен указывать только на отдельную одноразовую
 тестовую БД: тесты очищают таблицы и выполняют downgrade/upgrade. Рабочую БД
 передавать нельзя. `.github/workflows/backend.yml` запускает те же проверки на двух БД.
 
-Ограничения: ядро роли 2 не подключено; интерфейс проверочный; списки без пагинации;
+Ограничения: ядро подключено, но реальный Qwen не проверен; интерфейс проверочный; списки без пагинации;
 длинную историю ограничивает ядро (backend передаёт полный завершённый диалог).
 Регистрация без писем, МТС SSO и CRM пока отсутствуют.

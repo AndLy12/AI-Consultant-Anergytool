@@ -33,7 +33,8 @@ class RecordingCore:
 class BackendTest(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
-        # TEST_DATABASE_URL must point only to a disposable test database.
+        # TEST_DATABASE_URL должен указывать только на отдельную тестовую БД:
+        # её содержимое очищается перед проверками.
         self.url = os.getenv("TEST_DATABASE_URL", "sqlite:///" + str(Path(self.tmp.name) / "test.db"))
         self.env = patch.dict(os.environ, {"DATABASE_URL": self.url})
         self.env.start()

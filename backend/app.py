@@ -92,11 +92,12 @@ def create_app(database_url=None, core=None):
         try:
             yield
         finally:
-            # Адаптер владеет отдельным async-циклом и закрывает его вместе с приложением.
-            from backend.legacy_core import AsyncConsultantAdapter
+            # Закрываем и async-адаптер, и синхронное ядро Данька через их
+            # необязательный close(). Соединения не должны переживать приложение.
             try:
-                if isinstance(app.state.core, AsyncConsultantAdapter):
-                    app.state.core.close()
+                close = getattr(app.state.core, "close", None)
+                if callable(close):
+                    close()
             finally:
                 engine.dispose()
 
@@ -186,7 +187,12 @@ def create_app(database_url=None, core=None):
         # Проверяем доступность схемы БД; этот маршрут не проверяет реальный вызов Qwen.
         with engine.connect() as connection:
             connection.execute(select(db.users.c.id).limit(1))
-        return {"status": "ok", "core_mode": os.getenv("CORE_MODE", "real")}
+        # real означает загрузку фабрики, но не обязательно настоящую модель:
+        # у Данька CORE_DEMO=true включает синтетическую базу и тестовый клиент.
+        from backend.core import MissingCore
+        demo = bool(getattr(getattr(app.state.core, "settings", None), "demo", False))
+        return {"status": "ok", "core_mode": os.getenv("CORE_MODE", "real"),
+                "core_demo": demo, "core_ready": not isinstance(app.state.core, MissingCore)}
 
     @app.post("/api/auth/register", status_code=201)
     def register(body: Credentials, response: Response):
