@@ -1,0 +1,2 @@
+# Совместимый путь установки из прежнего README.
+-r requirements-web.txt

@@ -9,3 +9,7 @@ __pycache__
 *.db*
 tests
 .github
+var
+data
+*.sqlite*
+*.log

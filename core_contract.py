@@ -23,7 +23,10 @@ class Source(ContractModel):
     document_id: str = Field(min_length=1, max_length=200)
     chunk_id: str = Field(min_length=1, max_length=200)
     title: str = Field(min_length=1, max_length=500)
-    excerpt: str = Field(min_length=1, max_length=4000)
+    # Цитата до 8000 символов сохраняется целиком по существующему контракту Данька.
+    excerpt: str = Field(min_length=1, max_length=8000)
+    section: str | None = Field(default=None, max_length=500)
+    page: int | None = Field(default=None, ge=1)
 
 
 class CoreRequest(ContractModel):
@@ -39,6 +42,10 @@ class CoreResponse(ContractModel):
     sources: list[Source] = Field(default_factory=list, max_length=30)
     action: Literal["answer", "clarify", "out_of_scope", "offer_application"] = "answer"
     summary_draft: str | None = Field(default=None, max_length=10000)
+    # Диагностика исходного async-протокола сохраняется, а не теряется при адаптации.
+    core_status: Literal["answered", "clarification_needed", "insufficient_data", "out_of_scope"] | None = None
+    missing_information: list[str] = Field(default_factory=list, max_length=20)
+    warnings: list[str] = Field(default_factory=list, max_length=20)
 
 
 class ConsultantCore(Protocol):

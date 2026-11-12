@@ -1,5 +1,12 @@
 # AI Consultant for Energytool
 
+Каталог `core/` из командного main сохранён. Backend-заглушка заменена версией
+с аккаунтами и заявками. `backend.main:create_app` и `python run.py` запускают
+новую реализацию; старые `/api/chats` заменены `/api/dialogs` (см. docs/BACKEND.md).
+После установки requirements-web.txt можно запустить `CORE_MODE=stub python run.py`;
+миграции будут применены автоматически. Устанавливать два разных набора backend
+зависимостей не нужно: requirements-backend.txt теперь ссылается на requirements-web.txt.
+
 ## Backend роли 1
 
 Запуск веб-прототипа: [docs/BACKEND.md](docs/BACKEND.md).

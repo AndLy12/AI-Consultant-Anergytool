@@ -89,8 +89,16 @@ def create_app(database_url=None, core=None):
         # При нескольких репликах потребуется другой механизм восстановления.
         with engine.begin() as connection:
             connection.execute(update(db.messages).where(db.messages.c.status == "processing").values(status="failed"))
-        yield
-        engine.dispose()
+        try:
+            yield
+        finally:
+            # Адаптер владеет отдельным async-циклом и закрывает его вместе с приложением.
+            from backend.legacy_core import AsyncConsultantAdapter
+            try:
+                if isinstance(app.state.core, AsyncConsultantAdapter):
+                    app.state.core.close()
+            finally:
+                engine.dispose()
 
     app = FastAPI(title="Energytool backend", version="1.0.0", lifespan=lifespan)
     app.state.engine = engine
@@ -311,13 +319,13 @@ def create_app(database_url=None, core=None):
         elapsed = round((time.monotonic() - started) * 1000)
         answer = dict(id=db.uid(), dialog_id=dialog_id, request_id=request_id, role="assistant",
                       content=result.answer, status="completed", sources=[s.model_dump() for s in result.sources],
-                      result_meta={"action": result.action, "summary_draft": result.summary_draft},
+                      result_meta=result.model_dump(exclude={"answer", "sources"}),
                       elapsed_ms=elapsed, created_at=db.now())
         with engine.begin() as connection:
             connection.execute(update(db.messages).where(db.messages.c.id == message_id).values(status="completed"))
             # Статус запроса и ответ фиксируем вместе: частично завершённый обмен не сохраняется.
             connection.execute(insert(db.messages).values(**answer))
-        return {**answer, "action": result.action, "summary_draft": result.summary_draft}
+        return {**answer, **answer["result_meta"]}
 
     @app.put("/api/dialogs/{dialog_id}/application")
     def draft_application(dialog_id: str, body: ApplicationInput, user=Depends(authenticated)):

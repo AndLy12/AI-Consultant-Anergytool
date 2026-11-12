@@ -40,5 +40,9 @@ def load_core():
     except Exception:
         raise CoreUnavailable("Core initialization failed; check module dependencies and configuration") from None
     if not callable(getattr(core, "respond", None)):
-        raise CoreUnavailable("Core object must expose respond(request)")
+        # Сохраняем опубликованный протокол Данька, не меняя core/contracts.py.
+        if callable(getattr(core, "answer", None)):
+            from backend.legacy_core import AsyncConsultantAdapter
+            return AsyncConsultantAdapter(core)
+        raise CoreUnavailable("Core object must expose respond(request) or async answer(history)")
     return core

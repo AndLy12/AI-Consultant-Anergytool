@@ -14,3 +14,13 @@ dist/
 # Private case materials must not be published.
 Данные/
 /МТС_*.pdf
+var/
+data/
+*.sqlite*
+*.db-*
+*.log
+.pytest_cache/
+.coverage
+coverage.xml
+.env.*
+!.env.example

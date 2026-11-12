@@ -4,6 +4,7 @@ WORKDIR /app
 COPY requirements-web.txt .
 RUN pip install --no-cache-dir -r requirements-web.txt && useradd --uid 10001 --create-home app && mkdir /data && chown app:app /data
 COPY backend backend
+COPY core core
 COPY migrations migrations
 COPY *.py ./
 COPY alembic.ini ./
