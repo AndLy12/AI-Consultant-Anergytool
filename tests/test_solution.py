@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import csv
+import os
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 import solution
 
@@ -58,7 +60,8 @@ class SolutionTest(unittest.TestCase):
             questions_path = Path(temporary_directory) / "questions.csv"
             questions_path.write_text("id,question\n1,Вопрос\n", encoding="utf-8")
 
-            settings = solution.Settings.from_environment(str(questions_path), None)
+            with patch.dict(os.environ, {"DATA_DIR": ""}):
+                settings = solution.Settings.from_environment(str(questions_path), None)
 
             self.assertEqual(settings.data_dir, questions_path.parent.resolve())
 
