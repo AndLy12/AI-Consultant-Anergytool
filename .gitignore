@@ -1,0 +1,17 @@
+.venv/
+.idea/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.env
+.env.*
+!.env.example
+var/
+data/
+*.db
+*.db-*
+*.sqlite*
+*.zip
+*.log
+coverage.xml
+.coverage
