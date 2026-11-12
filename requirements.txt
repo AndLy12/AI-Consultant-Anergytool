@@ -1,0 +1,2 @@
+# The stage-1 baseline uses only the Python 3.10+ standard library.
+
