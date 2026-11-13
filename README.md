@@ -1,5 +1,12 @@
 # МТС Energytool — веб-прототип и общее ядро
 
+Интеграционная версия от 13 ноября: ядро Данька из codex/core-knowledge-base
+и React-интерфейс Даши из frontend-role4-ui собраны вместе. Docker строит
+frontend отдельным Node-этапом, FastAPI раздаёт готовую сборку с того же адреса,
+что и API. После запуска открыть http://localhost:8000 — dev-сервер Vite не нужен.
+Одна правка frontend исправляет позднее затирание вручную очищенного резюме.
+Код ядра и исходные браузерные тесты Даши сохранены без изменений.
+
 Backend хранит аккаунты, сессии, историю и подтверждённые заявки. Ядро Данька
 подключено через consultant_core.create_core(); тот же код используется solution.py.
 Каталог core, фабрика, платформенный скрипт и сборщик перенесены без изменений.
@@ -52,7 +59,13 @@ SQLite хранится в постоянном томе; down без --volumes 
 ```bash
 python -m pytest -q
 CORE_MODE=real CORE_DEMO=true python -m backend.check_core --message 'Как экспортировать отчёт стенда Альфа?'
+python scripts/check_fullstack.py --mode demo
 ```
+
+Для браузерного прогона нужны `npm ci` в frontend и браузер Playwright либо
+системный Chrome/Edge; скрипт собирает React и создаёт отдельные БД/сервер/порт.
+Состояние обычного приложения он не использует. Для инструментов базы из
+knowledge-base-work: `../.venv-core/bin/python -m unittest discover -s tests -v`.
 
 pytest включает unittest и tests/core Данька. Старый baseline заменён: его CLI/HTTP
 тесты приведены к актуальному контракту. CI использует Python 3.12 и обе БД;

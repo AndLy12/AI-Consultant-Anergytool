@@ -13,6 +13,7 @@ from threading import Lock
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 from uuid import UUID
+from pathlib import Path
 
 from fastapi import Depends, FastAPI, HTTPException, Request, Response
 from fastapi.responses import FileResponse
@@ -78,6 +79,15 @@ class Confirmation(Input):
 
 def create_app(database_url=None, core=None):
     """Создаём приложение; тесты могут подставить отдельную БД и тестовое ядро."""
+    # Код Даши не меняем: раздаём результат её сборки с того же origin, что и API.
+    # В Docker каталог задаётся явно; локально используем frontend/dist после npm run build.
+    configured_frontend = os.getenv("FRONTEND_DIST", "").strip()
+    frontend_dist = (Path(configured_frontend).expanduser().resolve() if configured_frontend else
+                     Path(__file__).resolve().parents[1] / "frontend" / "dist")
+    frontend_ready = (frontend_dist / "index.html").is_file() and (frontend_dist / "assets").is_dir()
+    if configured_frontend and not frontend_ready:
+        # Явно заказанная production-сборка не должна незаметно подменяться заглушкой.
+        raise RuntimeError("FRONTEND_DIST must contain a built index.html and assets directory")
     engine = db.make_engine(database_url)
 
     @asynccontextmanager
@@ -192,7 +202,8 @@ def create_app(database_url=None, core=None):
         from backend.core import MissingCore
         demo = bool(getattr(getattr(app.state.core, "settings", None), "demo", False))
         return {"status": "ok", "core_mode": os.getenv("CORE_MODE", "real"),
-                "core_demo": demo, "core_ready": not isinstance(app.state.core, MissingCore)}
+                "core_demo": demo, "core_ready": not isinstance(app.state.core, MissingCore),
+                "frontend": "react" if frontend_ready else "diagnostic"}
 
     @app.post("/api/auth/register", status_code=201)
     def register(body: Credentials, response: Response):
@@ -411,9 +422,15 @@ def create_app(database_url=None, core=None):
 
     @app.get("/")
     def index():
-        # Проверочный frontend раздаётся с того же origin, что и API: отдельный CORS не нужен.
+        if frontend_ready:
+            return FileResponse(frontend_dist / "index.html")
+        # Разработка API возможна и без Node-сборки: сохраняем диагностическую страницу.
         return FileResponse(os.path.join(os.path.dirname(__file__), "static", "index.html"))
 
     from fastapi.staticfiles import StaticFiles
+    if frontend_ready:
+        # Только публичные assets, а не весь каталог проекта или база. Не добавляем
+        # SPA fallback для /api: неизвестный метод должен оставаться честным 404.
+        app.mount("/assets", StaticFiles(directory=frontend_dist / "assets"), name="frontend-assets")
     app.mount("/static", StaticFiles(directory=os.path.join(os.path.dirname(__file__), "static")), name="static")
     return app

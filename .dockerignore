@@ -23,3 +23,9 @@ docs
 examples
 *.md
 scripts
+**/node_modules
+**/dist
+**/tests/shots
+**/.env
+**/.env.local
+knowledge-base-work/data

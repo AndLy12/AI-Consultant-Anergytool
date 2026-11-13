@@ -11,6 +11,7 @@ import json
 import os
 from pathlib import Path
 import socket
+import re
 import subprocess
 import urllib.request
 from uuid import uuid4
@@ -61,6 +62,16 @@ def main():
         compose("up", "--detach", "--wait", "--wait-timeout", "120")
         client = browser()
         health = api(client, "/health")
+        assert health["frontend"] == "react", "Production UI was not included in image"
+        # Проверяем реальные хешированные JS/CSS сборки, а не только заглушку API.
+        with client.open(origin, timeout=15) as response:
+            html = response.read().decode()
+        assets = re.findall(r'(?:src|href)="(/assets/[^\"]+)"', html)
+        assert any(path.endswith('.js') for path in assets)
+        assert any(path.endswith('.css') for path in assets)
+        for path in assets:
+            with client.open(origin + path, timeout=15) as response:
+                assert response.status == 200 and response.read()
         assert health["core_mode"] == ("stub" if mode == "stub" else "real")
         assert health["core_demo"] == (mode == "demo")
         uid = compose("exec", "-T", "backend", "id", "-u", capture=True).stdout.strip()
