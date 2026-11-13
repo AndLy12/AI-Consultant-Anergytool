@@ -67,6 +67,9 @@ def main():
                 subprocess.run([sys.executable,'-m','backend.manage','grant-staff',
                     '--email','reviewer@example.test'],cwd=ROOT,env=env,check=True)
                 subprocess.run([npm,'run','test:ui'],cwd=ROOT/'frontend',env=env,check=True)
+                # Отдельная регрессия нашей интеграции: форма до ответа модели.
+                # Тесты и исходники frontend остаются точной версией ветки Даши.
+                subprocess.run([shutil.which('node'),'scripts/check_late_summary.mjs'],cwd=ROOT,env=env,check=True)
                 subprocess.run([npm,'run','test:staff'],cwd=ROOT/'frontend',env=env,check=True)
                 print(f'Full-stack browser checks OK: {mode}; original Dasha browser tests passed')
             except Exception:
