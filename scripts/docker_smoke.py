@@ -62,6 +62,7 @@ def main():
         compose("up", "--detach", "--wait", "--wait-timeout", "120")
         client = browser()
         health = api(client, "/health")
+        assert api(client, "/ready")["status"] == "ready"
         assert health["frontend"] == "react", "Production UI was not included in image"
         # Проверяем реальные хешированные JS/CSS сборки, а не только заглушку API.
         with client.open(origin, timeout=15) as response:

@@ -113,6 +113,10 @@ def create_app(database_url=None, core=None):
 
     app = FastAPI(title="Energytool backend", version="1.0.0", lifespan=lifespan)
     app.state.engine = engine
+    from alembic.config import Config
+    from alembic.script import ScriptDirectory
+    migration_config = Config(str(Path(__file__).resolve().parents[1] / "alembic.ini"))
+    expected_revision = ScriptDirectory.from_config(migration_config).get_current_head()
     cookie_secure = os.getenv("COOKIE_SECURE", "false").lower() == "true"
     allowed_origin = os.getenv("APP_ORIGIN", "http://localhost:8000").rstrip("/")
     attempts, attempts_lock = defaultdict(deque), Lock()
@@ -204,6 +208,29 @@ def create_app(database_url=None, core=None):
         return {"status": "ok", "core_mode": os.getenv("CORE_MODE", "real"),
                 "core_demo": demo, "core_ready": not isinstance(app.state.core, MissingCore),
                 "frontend": "react" if frontend_ready else "diagnostic"}
+
+    @app.get("/ready")
+    def ready():
+        """Готовность локальных компонентов, без платных запросов и деталей ошибок БД."""
+        from alembic.runtime.migration import MigrationContext
+        from sqlalchemy.exc import SQLAlchemyError
+        from fastapi.responses import JSONResponse
+        from backend.core import MissingCore
+        database_ready = False
+        try:
+            with engine.connect() as connection:
+                connection.execute(select(db.users.c.id).limit(1))
+                database_ready = MigrationContext.configure(connection).get_current_heads() == (expected_revision,)
+        except SQLAlchemyError:
+            # URL/параметры драйвера не попадают в публичную диагностику.
+            pass
+        core_ready = not isinstance(app.state.core, MissingCore)
+        is_ready = database_ready and core_ready
+        demo = bool(getattr(getattr(app.state.core, "settings", None), "demo", False))
+        return JSONResponse({"status": "ready" if is_ready else "not_ready",
+                             "checks": {"database": database_ready, "core": core_ready},
+                             "core_mode": os.getenv("CORE_MODE", "real"), "core_demo": demo,
+                             "provider_checked": False}, status_code=200 if is_ready else 503)
 
     @app.post("/api/auth/register", status_code=201)
     def register(body: Credentials, response: Response):
