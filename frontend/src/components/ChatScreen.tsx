@@ -43,6 +43,29 @@ function buildSummaryFallback(messages: Message[]): string {
   return `Запрос клиента:\n${lines.join('\n')}`.slice(0, 4000)
 }
 
+/** Как часто перечитываем диалог, пока backend готовит ответ на сообщение из истории. */
+const WAIT_POLL_MS = 1500
+
+/**
+ * Неудачная отправка, восстановленная из истории после перезагрузки страницы.
+ *
+ * Состояние «ошибка + Повторить» живёт в памяти и пропадает при F5, а backend
+ * хранит такое сообщение со статусом failed. Если оно последнее в диалоге,
+ * снова предлагаем повтор. Прежний request_id backend для неудачного сообщения
+ * не принимает, поэтому повтор всегда идёт с новым идентификатором.
+ */
+function failedFromHistory(messages: Message[]): FailedSend | null {
+  const last = messages[messages.length - 1]
+  if (!last || last.role !== 'user' || last.status !== 'failed') return null
+  return {
+    content: last.content,
+    requestId: last.request_id,
+    text: 'Ответ на это сообщение не получен из-за сбоя сервиса.',
+    technical: true,
+    fresh: true,
+  }
+}
+
 export default function ChatScreen({ debug, onSessionExpired }: Props) {
   const [dialog, setDialog] = useState<DialogWithMessages | null>(null)
   const [loading, setLoading] = useState(true)
@@ -97,6 +120,8 @@ export default function ChatScreen({ debug, onSessionExpired }: Props) {
         const full = await api.getDialog(active.id)
         if (cancelled) return
         setDialog(full)
+        // После F5 возвращаем кнопку «Повторить», если последняя отправка не удалась.
+        setFailed(failedFromHistory(full.messages))
         await loadCard(active.id)
       } catch (caught) {
         if (!cancelled) handleFailure(caught)
@@ -116,6 +141,11 @@ export default function ChatScreen({ debug, onSessionExpired }: Props) {
   }, [dialog?.messages.length, pending, failed])
 
   const messages = dialog?.messages ?? []
+
+  // Сообщение из истории ещё обрабатывается: так бывает после F5 во время ожидания.
+  // Сам запрос оборвался вместе со страницей, но backend продолжает готовить ответ.
+  const lastMessage = messages[messages.length - 1]
+  const waiting = !sending && lastMessage?.role === 'user' && lastMessage.status === 'processing'
 
   const summaryDraft = useMemo(() => {
     const fromCore = [...messages]
@@ -137,8 +167,35 @@ export default function ChatScreen({ debug, onSessionExpired }: Props) {
     [],
   )
 
+  // Пока ждём ответ на сообщение из истории, перечитываем диалог. Остановимся, когда
+  // появится ответ или backend отметит сообщение как failed (тогда покажем «Повторить»).
+  const dialogId = dialog?.id
+  useEffect(() => {
+    if (!waiting || !dialogId) return
+    let cancelled = false
+    const timer = window.setInterval(async () => {
+      try {
+        const fresh = await api.getDialog(dialogId)
+        // Пользователь мог уже открыть другой диалог: устаревший ответ не применяем.
+        if (cancelled) return
+        setDialog(fresh)
+        setFailed(failedFromHistory(fresh.messages))
+        considerOffer(fresh, card)
+      } catch (caught) {
+        if (cancelled) return
+        if (caught instanceof ApiError && caught.status === 401) onSessionExpired()
+        // Прочие ошибки не показываем: следующая попытка будет через WAIT_POLL_MS.
+      }
+    }, WAIT_POLL_MS)
+    return () => {
+      cancelled = true
+      window.clearInterval(timer)
+    }
+  }, [waiting, dialogId, card, considerOffer, onSessionExpired])
+
   async function send(text: string, requestIdOverride?: string) {
-    if (sending) return
+    // Второе сообщение backend отклонит, пока не готов ответ на первое.
+    if (sending || waiting) return
     setError('')
     setFailed(null)
 
@@ -268,7 +325,7 @@ export default function ChatScreen({ debug, onSessionExpired }: Props) {
       ) : null}
 
       <div className="feed" aria-live="polite" aria-label="Переписка с консультантом">
-        {empty ? <StartSuggestions onPick={(text) => void send(text)} disabled={sending} /> : null}
+        {empty ? <StartSuggestions onPick={(text) => void send(text)} disabled={sending || waiting} /> : null}
 
         {messages.map((message) => (
           <div key={message.id}>
@@ -279,14 +336,17 @@ export default function ChatScreen({ debug, onSessionExpired }: Props) {
           </div>
         ))}
 
-        {pending ? (
+        {pending || waiting ? (
           <>
-            <article className="row row-user">
-              <div className="bubble bubble-user bubble-pending">
-                <p className="bubble-text">{pending}</p>
-                <p className="bubble-time">отправляем…</p>
-              </div>
-            </article>
+            {/* Текст ожидающего сообщения после F5 уже есть в истории: дублировать не нужно. */}
+            {pending ? (
+              <article className="row row-user">
+                <div className="bubble bubble-user bubble-pending">
+                  <p className="bubble-text">{pending}</p>
+                  <p className="bubble-time">отправляем…</p>
+                </div>
+              </article>
+            ) : null}
             <article className="row row-bot">
               <div className="avatar" aria-hidden="true">E</div>
               <div className="bubble bubble-bot">
@@ -313,7 +373,7 @@ export default function ChatScreen({ debug, onSessionExpired }: Props) {
                   ? 'Это сбой сервиса, а не отсутствие информации в базе знаний.'
                   : 'Проверьте данные и повторите отправку.'}
               </p>
-              <button type="button" className="button button-primary" onClick={retry} disabled={sending}>
+              <button type="button" className="button button-primary" onClick={retry} disabled={sending || waiting}>
                 Повторить
               </button>
             </div>
@@ -335,7 +395,7 @@ export default function ChatScreen({ debug, onSessionExpired }: Props) {
         />
       ) : null}
 
-      <Composer onSend={(text) => void send(text)} disabled={sending} closed={closed} />
+      <Composer onSend={(text) => void send(text)} disabled={sending || waiting} closed={closed} />
 
       {askNewDialog ? (
         <ConfirmModal
