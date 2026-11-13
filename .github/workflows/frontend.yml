@@ -10,7 +10,9 @@ concurrency:
   cancel-in-progress: true
 jobs:
   browser:
-    runs-on: ubuntu-latest
+    # Playwright 1.57 из lock-файла Даши поддерживает Ubuntu 24.04, но не 26.04.
+    # Фиксируем ОС, чтобы обновление ubuntu-latest не ломало установку браузера.
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     strategy:
       fail-fast: false
