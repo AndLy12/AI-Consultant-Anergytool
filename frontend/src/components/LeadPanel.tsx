@@ -15,7 +15,7 @@
  * звонка, срока и имени специалиста.
  */
 
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { ApiError, api } from '../api/client'
 import type { Application } from '../api/types'
 import { describeError, fieldErrors as parseFieldErrors } from '../lib/errors'
@@ -49,7 +49,12 @@ export default function LeadPanel({
   onCard,
   onSessionExpired,
 }: Props) {
-  const [fields, setFields] = useState<Fields>(EMPTY)
+  // Начальные значения задаём до первого показа формы, а не поздним effect:
+  // иначе пользователь успевает очистить резюме, после чего автозаполнение его возвращает.
+  const [fields, setFields] = useState<Fields>(() => card
+    ? { full_name: card.full_name, phone: card.phone, company: card.company, summary: card.summary }
+    : { ...EMPTY, summary: summaryDraft })
+  const edited = useRef(false)
   const [invalid, setInvalid] = useState<FieldErrors>({})
   const [consent, setConsent] = useState(false)
   const [error, setError] = useState('')
@@ -60,6 +65,8 @@ export default function LeadPanel({
   useEffect(() => {
     if (stage !== 'form') return
     setFields((current) => {
+      // Явное редактирование, включая очистку единственного резюме, имеет приоритет.
+      if (edited.current) return current
       if (current.full_name || current.phone || current.company) return current
       return card
         ? { full_name: card.full_name, phone: card.phone, company: card.company, summary: card.summary }
@@ -68,6 +75,7 @@ export default function LeadPanel({
   }, [stage, card, summaryDraft])
 
   function update(key: FieldName, value: string) {
+    edited.current = true
     setFields((current) => ({ ...current, [key]: value }))
     // Подсказку убираем сразу, как только поле начали исправлять.
     setInvalid((current) => (current[key] ? { ...current, [key]: undefined } : current))
