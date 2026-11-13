@@ -15,7 +15,7 @@
  * звонка, срока и имени специалиста.
  */
 
-import { useEffect, useRef, useState } from 'react'
+import { useState } from 'react'
 import { ApiError, api } from '../api/client'
 import type { Application } from '../api/types'
 import { describeError, fieldErrors as parseFieldErrors } from '../lib/errors'
@@ -40,6 +40,14 @@ type Fields = Record<FieldName, string>
 
 const EMPTY: Fields = { full_name: '', phone: '', company: '', summary: '' }
 
+/** Что подставить при открытии формы; null — подставлять пока нечего. */
+function startFields(card: Application | null, summaryDraft: string): Fields | null {
+  if (card) {
+    return { full_name: card.full_name, phone: card.phone, company: card.company, summary: card.summary }
+  }
+  return summaryDraft ? { ...EMPTY, summary: summaryDraft } : null
+}
+
 export default function LeadPanel({
   dialogId,
   stage,
@@ -49,33 +57,44 @@ export default function LeadPanel({
   onCard,
   onSessionExpired,
 }: Props) {
-  // Начальные значения задаём до первого показа формы, а не поздним effect:
-  // иначе пользователь успевает очистить резюме, после чего автозаполнение его возвращает.
-  const [fields, setFields] = useState<Fields>(() => card
-    ? { full_name: card.full_name, phone: card.phone, company: card.company, summary: card.summary }
-    : { ...EMPTY, summary: summaryDraft })
-  const edited = useRef(false)
+  const [fields, setFields] = useState<Fields>(EMPTY)
+  // Автозаполнение формы срабатывает один раз за открытие: 'waiting' — данных
+  // для подстановки ещё нет, 'done' — поле больше не трогаем.
+  const [prefill, setPrefill] = useState<'waiting' | 'done'>('waiting')
+  const [formShown, setFormShown] = useState(false)
   const [invalid, setInvalid] = useState<FieldErrors>({})
   const [consent, setConsent] = useState(false)
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
 
-  // При открытии формы подставляем сохранённую карточку, иначе — черновик резюме.
-  // Уже введённый текст не затираем: иначе правка после ошибки теряла бы данные.
-  useEffect(() => {
-    if (stage !== 'form') return
-    setFields((current) => {
-      // Явное редактирование, включая очистку единственного резюме, имеет приоритет.
-      if (edited.current) return current
-      if (current.full_name || current.phone || current.company) return current
-      return card
-        ? { full_name: card.full_name, phone: card.phone, company: card.company, summary: card.summary }
-        : { ...EMPTY, summary: summaryDraft }
-    })
-  }, [stage, card, summaryDraft])
+  // Подстановку делаем прямо при отрисовке, а не в effect: так форма никогда
+  // не показывается со старыми значениями и не перезаписывается «задним числом».
+  //
+  // Почему не просто «при каждом изменении summaryDraft, пока поле не правили»:
+  // форму можно открыть до ответа консультанта, когда черновик ещё пуст.
+  // Очистка уже пустого поля не вызывает ни одного события, и такую «правку»
+  // нельзя отличить от бездействия. Поэтому после отправки формы или любой
+  // правки автозаполнение прекращается, и поздний черновик поле не трогает.
+  const isForm = stage === 'form'
+  if (isForm !== formShown) {
+    setFormShown(isForm)
+    if (isForm) {
+      // Новое открытие формы: сохранённая карточка, иначе — черновик резюме, если он уже есть.
+      const start = startFields(card, summaryDraft)
+      setFields(start ?? EMPTY)
+      setPrefill(start ? 'done' : 'waiting')
+    }
+  } else if (isForm && prefill === 'waiting') {
+    // Форму открыли раньше, чем появился черновик, и её ещё не трогали: подставляем один раз.
+    const start = startFields(card, summaryDraft)
+    if (start) {
+      setFields(start)
+      setPrefill('done')
+    }
+  }
 
   function update(key: FieldName, value: string) {
-    edited.current = true
+    setPrefill('done')
     setFields((current) => ({ ...current, [key]: value }))
     // Подсказку убираем сразу, как только поле начали исправлять.
     setInvalid((current) => (current[key] ? { ...current, [key]: undefined } : current))
@@ -98,6 +117,8 @@ export default function LeadPanel({
   async function save(event: React.FormEvent) {
     event.preventDefault()
     if (busy) return
+    // После отправки поле принадлежит пользователю: поздний черновик его не заменит.
+    setPrefill('done')
 
     const found = validateApplication(fields)
     if (Object.keys(found).length > 0) {

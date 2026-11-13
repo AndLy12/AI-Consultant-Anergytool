@@ -28,6 +28,11 @@ const error = (field) => page.locator(`#lead-${field}-error`)
 const input = (field) => page.locator(`#lead-${field}`)
 
 // --- Пустая форма: подсказки у каждого обязательного поля ---
+// Сначала дожидаемся автозаполненного резюме. Ожидание «.bubble-bot» выше может
+// сработать на индикаторе «печатает», и тогда форма открывается до ответа с пустым
+// резюме. Очистка уже пустого поля не вызывает ни одного события, а значит,
+// не проверяет то, что должна: что ручная очистка не отменяется черновиком.
+await page.waitForFunction(() => document.querySelector('#lead-summary')?.value.trim().length > 0)
 await input('summary').fill('')
 await page.getByRole('button', { name: 'Проверить карточку' }).click()
 await page.waitForSelector('#lead-full_name-error')
