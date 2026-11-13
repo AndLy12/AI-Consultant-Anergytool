@@ -153,6 +153,9 @@ def check_retrieval(core_root: Path, sources: Path, facts: list[dict], cases: li
     scored = [row for row in rows if row['scored']]
     return {
         'chunk_count': len(chunks), 'document_count': len({c.document_id for c in chunks}),
+        # Старые снимки ядра ранжируют фрагменты; различие важно для сравнения top-k.
+        'search_unit': 'section' if hasattr(index, 'sections') else 'chunk',
+        'search_sections': len(index.sections) if hasattr(index, 'sections') else None,
         'top_k': top_k, 'chunk_chars': settings.chunk_chars, 'context_chars': settings.context_chars,
         'formatting_only_chunks': sum(not any(ch.isalnum() for ch in c.text) for c in chunks),
         'cases_with_formatting_only_top_result': sum(row['top_result_is_formatting_only'] for row in rows),

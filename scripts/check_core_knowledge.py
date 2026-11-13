@@ -44,6 +44,7 @@ def check(data_dir: Path, questions: Path | None = None, *, top_k: int = 5) -> d
         })
     return {
         'documents': len({c.document_id for c in chunks}), 'chunks': len(chunks),
+        'search_unit': 'section', 'search_sections': len(index.sections),
         'formatting_only_chunks': sum(not any(ch.isalnum() for ch in c.text) for c in chunks),
         'top_k': top_k, 'chunk_chars': settings.chunk_chars,
         'context_chars': settings.context_chars, 'questions': len(rows),

@@ -77,3 +77,38 @@ def test_offline_check_uses_only_corpus_and_parses_independent_dialogues(tmp_pat
     assert report['cases'][0]['id'] == '001' and report['cases'][0]['history_turns'] == 2
     assert report['questions_with_context'] == 1
     assert report['llm_called'] is False and report['generated_answers_evaluated'] is False
+
+
+def test_section_search_returns_one_candidate_per_semantic_section():
+    text = ('# Учебный стенд\n\n## Монтаж\n\nСтенд монтируется на кровле.\n\n'
+            'Для старой кровли требуется предварительное обследование.\n\n'
+            '## Экспорт\n\nУчебные показатели выгружаются в CSV.')
+    chunks = tuple(make_chunks('training.md', [(text, None, None)], 1800))
+    index = SearchIndex(chunks)
+    hits = index.search('Монтаж стенда на старой кровле', 5)
+    groups = [(h.chunk.document_id, h.chunk.section_path) for h in hits]
+    assert len(groups) == len(set(groups))
+    assert hits[0].chunk.section == 'Монтаж'
+    context = index.context(hits, 2000)
+    assert any('предварительное обследование' in c.text for c in context)
+
+
+def test_power_and_energy_units_find_distinct_sources():
+    chunks = tuple(make_chunks('training.md', [('# Единицы стенда\n\n'
+        'Мощность измеряется в киловаттах.\n\nЭнергия измеряется в киловатт-часах.', None, None)], 1800))
+    index = SearchIndex(chunks)
+    power = index.search('кВт', 1)
+    energy = index.search('кВт·ч', 1)
+    assert 'Мощность' in power[0].chunk.text
+    assert 'Энергия' in energy[0].chunk.text
+    assert power[0].chunk.chunk_id != energy[0].chunk.chunk_id
+
+
+def test_context_keeps_result_caveat_outside_found_section():
+    text = ('# Учебная проверка\n\n## Описание\n\nСтенд формирует список объектов.\n\n'
+            '## Как работает решение\n\nСписок отражает вероятность, вывод требует проверки.\n\n'
+            '## Результат\n\nОкончательное решение принимает проверяющий.')
+    chunks = tuple(make_chunks('training.md', [(text, None, None)], 1800))
+    context = SearchIndex(chunks).context((Hit(chunks[0], 1),), 2000)
+    assert any('вывод требует проверки' in c.text for c in context)
+    assert any('проверяющий' in c.text for c in context)

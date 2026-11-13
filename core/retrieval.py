@@ -26,9 +26,18 @@ ENDINGS = ('иями', 'ыми', 'ими', 'ами', 'ого', 'его', 'ому
 
 
 def tokens(text: str) -> list[str]:
-    """Нормализация одинакова для запроса и базы; отрицания не удаляем."""
+    """Словоформы и обозначения единиц нормализуем одинаково в запросе и базе.
+
+    кВт и кВт·ч остаются разными единицами; числовые значения не переводим.
+    Нормализация меняет только поисковые ключи, исходные цитаты сохраняются.
+    """
+    text = text.lower().replace('ё', 'е')
+    text = re.sub(r'киловатт[а-я]*[\s-]+час[а-я]*', ' квтч ', text)
+    text = re.sub(r'\bквт\s*[·⋅*-]?\s*ч\b', ' квтч ', text)
+    text = re.sub(r'\bкиловатт[а-я]*\b', ' квт ', text)
+    text = re.sub(r'\bмегаватт[а-я]*\b', ' мвт ', text)
     result = []
-    for word in TOKEN.findall(text.lower().replace('ё', 'е')):
+    for word in TOKEN.findall(text):
         if word in STOP:
             continue
         # Лёгкое приведение русских окончаний без загрузки внешней морфологической модели.
@@ -49,19 +58,25 @@ class Hit:
 
 
 class SearchIndex:
-    """BM25Plus не даёт отрицательных IDF на небольшой демонстрационной базе."""
+    """BM25Plus ранжирует разделы и выбирает исходный фрагмент внутри каждого.
+
+    Индексы разделов и абзацев строятся один раз и только читаются при поиске.
+    Число и вес совпадений не являются вероятностью правильности ответа.
+    """
     def __init__(self, chunks: tuple[Chunk, ...]):
         # Проверяем и готовые фрагменты вызывающей стороны: заголовок не должен
         # превращать пустой разделитель в результат поиска.
         self.chunks = tuple(c for c in chunks if any(char.isalnum() for char in c.text))
         self.groups = defaultdict(list)
         self.guards = defaultdict(list)
+        sections = defaultdict(list)
         for chunk in self.chunks:
             path = chunk.section_path or (chunk.section,)
             group = (chunk.document_id, path[:2])
             self.groups[group].append(chunk)
+            sections[(chunk.document_id, path)].append(chunk)
         for (document_id, path), group in self.groups.items():
-            if any(re.search(r'кому подходит|не подходит|ограничени|границ|не делаем|утверждать нельзя',
+            if any(re.search(r'кому подходит|не подходит|ограничени|границ|не делаем|утверждать нельзя|как работает|результат',
                              heading or '', re.IGNORECASE) for heading in path):
                 self.guards[document_id].append(tuple(group))
         # После построения индекс только читается параллельными respond.
@@ -70,15 +85,29 @@ class SearchIndex:
         self.tokenized = tuple(tokens(chunk.text + ' ' + (chunk.section or '')) for chunk in self.chunks)
         self.token_sets = tuple(frozenset(row) for row in self.tokenized)
         self.bm25 = BM25Plus([row or ['__empty__'] for row in self.tokenized]) if self.chunks else None
+        # Изолированная строка таблицы может выиграть по одному числу, а нужный
+        # длинный абзац — проиграть из-за длины. Ранжируем смысловые разделы,
+        # затем выбираем внутри каждого исходный фрагмент с прежними ID.
+        self.sections = tuple(tuple(group) for group in sections.values())
+        section_tokens = tuple(tokens(' '.join((group[0].title, *(group[0].section_path or (group[0].section or '',)),
+                                                *(c.text for c in group)))) for group in self.sections)
+        self.section_sets = tuple(frozenset(row) for row in section_tokens)
+        self.section_bm25 = BM25Plus([row or ['__empty__'] for row in section_tokens]) if self.sections else None
+        self.positions = {chunk.chunk_id: i for i, chunk in enumerate(self.chunks)}
 
     def search(self, query: str, top_k=5) -> tuple[Hit, ...]:
         words = tokens(query)
         if not words or self.bm25 is None:
             return ()
         unique = set(words)
-        scores = self.bm25.get_scores(words)
-        candidates = [Hit(chunk, float(scores[i])) for i, chunk in enumerate(self.chunks)
-                      if self.token_sets[i] & unique]
+        scores = self.section_bm25.get_scores(words)
+        passage_scores = self.bm25.get_scores(words)
+        candidates = []
+        for i, group in enumerate(self.sections):
+            if not self.section_sets[i] & unique:
+                continue
+            best = min(group, key=lambda c: (-passage_scores[self.positions[c.chunk_id]], c.chunk_id))
+            candidates.append(Hit(best, float(scores[i])))
         candidates.sort(key=lambda item: (-item.score, item.chunk.chunk_id))
         return tuple(candidates[:top_k])
 
