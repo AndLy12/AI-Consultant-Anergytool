@@ -21,7 +21,13 @@ class KnowledgePreparationTests(unittest.TestCase):
     def archive_with(self, files):
         with zipfile.ZipFile(self.archive, "w") as archive:
             for name, data in files.items():
-                archive.writestr(name, data)
+                # ZipInfo на Windows заменяет обратный слеш при создании записи.
+                # Вредоносное имя задаём после конструктора, чтобы тест проверял
+                # сам валидатор, а не нормализованное безопасное имя.
+                info = zipfile.ZipInfo(name)
+                info.filename = name
+                info.orig_filename = name
+                archive.writestr(info, data)
 
     def run_prepare(self):
         return prepare(self.archive, self.sources, self.artifacts)
@@ -31,7 +37,7 @@ class KnowledgePreparationTests(unittest.TestCase):
         raw = b"\xef\xbb\xbf" + text.encode("utf-8")
         self.archive_with({"product/test.md": raw})
         manifest = self.run_prepare()
-        chunks = [json.loads(row) for row in (self.artifacts / "chunks.jsonl").read_text().splitlines()]
+        chunks = [json.loads(row) for row in (self.artifacts / "chunks.jsonl").read_text(encoding="utf-8").splitlines()]
         self.assertEqual(manifest["chunk_count"], 2)
         self.assertEqual((self.sources / "product/test.md").read_bytes(), raw)
         self.assertEqual("".join(c["text"] for c in chunks), text)
@@ -45,7 +51,7 @@ class KnowledgePreparationTests(unittest.TestCase):
         before = {p.name: p.read_bytes() for p in self.artifacts.iterdir()}
         self.assertEqual(first, self.run_prepare())
         self.assertEqual(before, {p.name: p.read_bytes() for p in self.artifacts.iterdir()})
-        doc = json.loads((self.artifacts / "documents.jsonl").read_text())
+        doc = json.loads((self.artifacts / "documents.jsonl").read_text(encoding="utf-8"))
         self.assertIsNone(doc["document_date"])
         self.assertIsNone(doc["version"])
 
@@ -73,7 +79,7 @@ class KnowledgePreparationTests(unittest.TestCase):
         self.archive_with({"test.md": "# Вторая версия"})
         with self.assertRaises(FileExistsError):
             self.run_prepare()
-        self.assertEqual((self.sources / "test.md").read_text(), "# Первая версия")
+        self.assertEqual((self.sources / "test.md").read_text(encoding="utf-8"), "# Первая версия")
 
     def test_nested_output_would_pollute_the_corpus(self):
         self.archive_with({"test.md": "# Тест"})
@@ -85,7 +91,7 @@ class KnowledgePreparationTests(unittest.TestCase):
         self.archive_with({"test.md": raw})
         manifest = self.run_prepare()
         self.assertEqual({w["kind"] for w in manifest["warnings"]}, {"missing_reference", "escaped_heading"})
-        self.assertEqual((self.sources / "test.md").read_text(), raw)
+        self.assertEqual((self.sources / "test.md").read_text(encoding="utf-8"), raw)
 
 
 if __name__ == "__main__":

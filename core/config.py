@@ -70,8 +70,8 @@ class Settings:
             retries=number('LLM_MAX_RETRIES', '2', 0, 3, True),
             max_workers=number('MAX_WORKERS', '4', 1, 16, True),
         )
-        if os.getenv('CHUNKER', 'sections') != 'sections':
-            raise CoreUnavailable('Этот baseline поддерживает CHUNKER=sections')
+        if os.getenv('CHUNKER', 'sections') not in {'sections', 'common'}:
+            raise CoreUnavailable('Поддерживается CHUNKER=sections или common (смысловое разбиение)')
         if not settings.demo:
             settings.validate_provider()
         return settings
