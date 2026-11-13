@@ -6,10 +6,12 @@
 """
 
 import http.cookiejar
+import argparse
 import json
 import os
 from pathlib import Path
 import socket
+import re
 import subprocess
 import urllib.request
 from uuid import uuid4
@@ -20,6 +22,9 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def main():
     """Собираем образ, создаём заявку и проверяем сохранность после пересоздания."""
+    parser = argparse.ArgumentParser(description="Проверка Docker с заглушкой или demo-ядром")
+    parser.add_argument("--mode", choices=["stub", "demo"], default="stub")
+    mode = parser.parse_args().mode
     if (ROOT / ".env").exists() or (ROOT / ".venv").exists():
         raise SystemExit("Проверку выполняют в чистой копии без .env и .venv")
     project = "energytool-smoke-" + uuid4().hex[:12]
@@ -29,7 +34,8 @@ def main():
         port = sock.getsockname()[1]
     origin = f"http://127.0.0.1:{port}"
     env = {k:v for k,v in os.environ.items() if not k.startswith(("LLM_", "OPENAI_"))}
-    env.update(CORE_MODE="stub", DATABASE_URL="sqlite:////data/energytool.db",
+    env.update(CORE_MODE="stub" if mode == "stub" else "real", CORE_DEMO="true" if mode == "demo" else "false",
+               DATABASE_URL="sqlite:////data/energytool.db",
                APP_PORT=str(port), APP_ORIGIN=origin, COOKIE_SECURE="false",
                CORE_MODULE="consultant_core", CORE_TIMEOUT_SECONDS="120", GEN_MODEL="")
     command = ["docker", "compose", "--project-name", project, "--file", str(ROOT / "compose.yaml")]
@@ -55,20 +61,37 @@ def main():
         compose("build", "--no-cache", "--pull")
         compose("up", "--detach", "--wait", "--wait-timeout", "120")
         client = browser()
-        assert api(client, "/health")["core_mode"] == "stub"
+        health = api(client, "/health")
+        assert api(client, "/ready")["status"] == "ready"
+        assert health["frontend"] == "react", "Production UI was not included in image"
+        # Проверяем реальные хешированные JS/CSS сборки, а не только заглушку API.
+        with client.open(origin, timeout=15) as response:
+            html = response.read().decode()
+        assets = re.findall(r'(?:src|href)="(/assets/[^\"]+)"', html)
+        assert any(path.endswith('.js') for path in assets)
+        assert any(path.endswith('.css') for path in assets)
+        for path in assets:
+            with client.open(origin + path, timeout=15) as response:
+                assert response.status == 200 and response.read()
+        assert health["core_mode"] == ("stub" if mode == "stub" else "real")
+        assert health["core_demo"] == (mode == "demo")
         uid = compose("exec", "-T", "backend", "id", "-u", capture=True).stdout.strip()
         assert uid != "0", "Контейнер не должен работать под root"
         compose("exec", "-T", "backend", "python", "-c",
             "from pathlib import Path; assert all(not Path(p).exists() for p in "
-            "['/app/.env', '/app/.venv', '/app/.git', '/app/Данные']), 'Private files leaked into image'")
+            "['/app/.env', '/app/.venv', '/app/.venv-core', '/app/.git', '/app/Данные']), 'Private files leaked into image'")
         email = f"docker-{uuid4().hex}@example.test"
         credentials = {"email":email, "password":"Docker-test-password-123"}
         session = api(client, "/api/auth/register", "POST", credentials)
         csrf = session["csrf_token"]
         dialog = api(client, "/api/dialogs", "POST", csrf=csrf)["id"]
         response = api(client, f"/api/dialogs/{dialog}/messages", "POST",
-            {"request_id":str(uuid4()), "content":"Вымышленная задача для проверки Docker"}, csrf)
-        assert "Тестовый режим" in response["content"]
+            {"request_id":str(uuid4()), "content":"Как экспортировать отчёт стенда Альфа в CSV?"}, csrf)
+        if mode == "stub":
+            assert "Тестовый режим" in response["content"]
+        else:
+            assert "Демонстрационный режим." in response["content"]
+            assert response["sources"] and response["warnings"]
         card_path = f"/api/dialogs/{dialog}/application"
         card = api(client, card_path, "PUT", {"full_name":"Тестовый Клиент",
             "phone":"+7 000 000-00-00", "company":"Тест Docker", "summary":"Проверка сохранности"}, csrf)

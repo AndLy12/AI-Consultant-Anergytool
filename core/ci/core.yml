@@ -1,0 +1,32 @@
+name: Core and knowledge tools
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  core:
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      # Отдельное окружение ядра: без FastAPI, БД, ключей и закрытых документов.
+      - run: python -m pip install -r requirements.txt pytest==8.3.5
+      - run: python -m pytest tests/core/test_engine.py tests/core/test_submission.py tests/core/test_knowledge.py -q
+      - run: python scripts/build_core_submission.py --output work/core-submission.zip
+      - name: Test knowledge tools on synthetic documents
+        working-directory: knowledge-base-work
+        run: python -m unittest discover -s tests -v

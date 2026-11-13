@@ -12,6 +12,10 @@ jobs:
   clean-start:
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        mode: [stub, demo]
     steps:
       - uses: actions/checkout@v4
         with:
@@ -25,4 +29,4 @@ jobs:
           docker version
           docker compose version
       - name: Build and test from clean checkout
-        run: python scripts/docker_smoke.py
+        run: python scripts/docker_smoke.py --mode ${{ matrix.mode }}

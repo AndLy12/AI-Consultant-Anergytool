@@ -1,5 +1,6 @@
 .git
 .venv
+.venv-core
 .env
 .env.*
 .git*
@@ -22,3 +23,10 @@ docs
 examples
 *.md
 scripts
+**/node_modules
+backups/
+**/dist
+**/tests/shots
+**/.env
+**/.env.local
+knowledge-base-work/data

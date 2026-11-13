@@ -1,20 +1,34 @@
 # Backend роли 1
 
+Общая сборка включает React-интерфейс Даши. `npm ci && npm run build` в frontend
+создаёт frontend/dist; при следующем старте backend автоматически раздаёт его.
+В Docker сборка выполняется отдельным Node-этапом, FRONTEND_DIST указывает на
+/app/frontend-dist. Явно заданный, но отсутствующий dist — ошибка старта,
+а не скрытая подмена старой страницей. Без сборки локально остаётся diagnostic UI.
+Хешированные JS/CSS доступны по /assets; API и интерфейс работают с одного origin.
+Запросы к неизвестным /api не подменяются HTML. Доступы к API не менялись.
+
 ## Локальный запуск
 
-Python 3.12+. Из корня репозитория:
+Используйте Python 3.12 и согласованный lock ядра. В текущем checkout создана .venv-core:
 
 ```bash
-source .venv/bin/activate
-pip install -r requirements-web.txt
+source .venv-core/bin/activate
+pip install -r requirements-dev.txt
 export DATABASE_URL=sqlite:///./energytool.db
 alembic upgrade head
-CORE_MODE=stub uvicorn backend.app:create_app --factory --host 127.0.0.1 --port 8000
+CORE_MODE=real CORE_DEMO=true uvicorn backend.app:create_app --factory --host 127.0.0.1 --port 8000
 ```
 
 Открыть http://localhost:8000. Зарегистрироваться, создать диалог, отправить
 сообщение, сохранить карточку, проверить её и подтвердить с вымышленными контактами.
-Stub явно сообщает, что реальное ядро не подключено. OpenAPI: `/docs`, health: `/health`.
+В этом режиме работает ядро Данька с вымышленными материалами, без Qwen.
+CORE_MODE=stub возвращает прежнюю backend-заглушку. Режим виден в UI и /health.
+OpenAPI: `/docs`, прежняя диагностика: `/health`, готовность: `/ready`.
+Полный актуальный HTTP-контракт: [API_CONTRACT.md](API_CONTRACT.md).
+`/ready` проверяет доступность БД, текущую ревизию Alembic и загруженное ядро;
+не вызывает модель и не доказывает доступность внешнего Qwen. При неготовности
+возвращает 503. В stub/demo успешная готовность относится именно к выбранному режиму.
 
 ## Docker
 
@@ -31,7 +45,7 @@ docker compose up --build --wait
 настройки контейнеру. Не публиковать `.env` или вывод `docker compose config` с ключами.
 Порт 8000 привязан к 127.0.0.1, SQLite хранится в постоянном volume app-data.
 Обычный `docker compose down` сохраняет базу; `down -v` удаляет том с данными.
-Миграции применяются перед запуском. `--wait` ждёт успешного healthcheck.
+Миграции применяются перед запуском. `--wait` ждёт успешного healthcheck `/ready`.
 Для другого порта задайте APP_PORT и соответствующий APP_ORIGIN в .env, например
 APP_PORT=8001 и APP_ORIGIN=http://localhost:8001. Внутренний порт останется 8000.
 
@@ -40,7 +54,6 @@ APP_PORT=8001 и APP_ORIGIN=http://localhost:8001. Внутренний порт
 контейнер с прежним томом и повторяет вход. Его одноразовый том удаляется при
 завершении; обычный app-data не используется. CI: `Docker clean start`.
 На текущем Mac Docker отсутствует; фактические результаты смотреть в CI ветки.
-Подробное объяснение Docker: [DOCKER_GUIDE.md](DOCKER_GUIDE.md).
 
 ## Аккаунты и сотрудники
 
@@ -60,6 +73,12 @@ python -m backend.manage grant-staff --email reviewer@example.test
 
 В Docker: `docker compose exec backend python -m backend.manage grant-staff --email ...`.
 После обновления страницы появится раздел проверки всех диалогов и заявок.
+
+Отзыв роли: `python -m backend.manage revoke-staff --email reviewer@example.test`.
+Он действует при следующем API-запросе и для уже открытых сессий. Вход обычного
+пользователя и его история сохраняются. Удаление только истёкших серверных сессий:
+`python -m backend.manage purge-expired-sessions`. Команда повторяема и не завершает
+действующие входы. В Docker команды также запускаются через `compose exec backend`.
 
 ## API для frontend
 
@@ -94,6 +113,11 @@ python -m backend.manage grant-staff --email reviewer@example.test
 
 ## Замена БД
 
+Резервирование SQLite и проверка восстановления описаны в
+[BACKUP_AND_RESTORE.md](BACKUP_AND_RESTORE.md). Команда `python -m backend.backup`
+создаёт согласованный снимок с учётом WAL; восстановление допускается только
+в новый файл. Копия основного `.db` работающего приложения без WAL ненадёжна.
+
 Для пустой PostgreSQL задать
 `DATABASE_URL=postgresql+psycopg://USER:PASSWORD@HOST:5432/DATABASE`, затем
 `alembic upgrade head`. Драйвер уже установлен. Для сохранения данных SQLite
@@ -107,13 +131,15 @@ python -m backend.manage grant-staff --email reviewer@example.test
 ## Проверки
 
 ```bash
-python -m unittest discover -s tests -v
+python -m pytest -q
 ```
 
 Для PostgreSQL TEST_DATABASE_URL должен указывать только на отдельную одноразовую
 тестовую БД: тесты очищают таблицы и выполняют downgrade/upgrade. Рабочую БД
 передавать нельзя. `.github/workflows/backend.yml` запускает те же проверки на двух БД.
 
-Ограничения: ядро роли 2 не подключено; интерфейс проверочный; списки без пагинации;
+Ограничения: ядро подключено, но реальный Qwen не проверен; React-интерфейс интегрирован,
+исправление резюме Даши fb989a4 подключено и проверено с задержанным ответом;
+списки без пагинации;
 длинную историю ограничивает ядро (backend передаёт полный завершённый диалог).
 Регистрация без писем, МТС SSO и CRM пока отсутствуют.
