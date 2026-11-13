@@ -74,6 +74,12 @@ python -m backend.manage grant-staff --email reviewer@example.test
 В Docker: `docker compose exec backend python -m backend.manage grant-staff --email ...`.
 После обновления страницы появится раздел проверки всех диалогов и заявок.
 
+Отзыв роли: `python -m backend.manage revoke-staff --email reviewer@example.test`.
+Он действует при следующем API-запросе и для уже открытых сессий. Вход обычного
+пользователя и его история сохраняются. Удаление только истёкших серверных сессий:
+`python -m backend.manage purge-expired-sessions`. Команда повторяема и не завершает
+действующие входы. В Docker команды также запускаются через `compose exec backend`.
+
 ## API для frontend
 
 | Метод и путь | Назначение |
