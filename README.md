@@ -81,6 +81,8 @@ Docker проверяет stub и demo отдельно. Python 3.10 к ново
 ## Материалы команды
 
 - [Backend и API](docs/BACKEND.md).
+- [HTTP-контракт v1](docs/API_CONTRACT.md).
+- [Резервная копия и восстановление SQLite](docs/BACKUP_AND_RESTORE.md).
 - [Контракт подключения ядра](docs/CORE_INTEGRATION.md).
 - [Фактический результат интеграции](docs/CORE_INTEGRATION_RESULT.md).
 - [Описание ядра Данька](core/README.md).

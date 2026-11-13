@@ -6,6 +6,7 @@
 """
 
 from contextlib import contextmanager
+from concurrent.futures import ThreadPoolExecutor
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 import os
@@ -13,7 +14,7 @@ from pathlib import Path
 import socket
 import subprocess
 import sys
-from threading import Thread
+from threading import Event, Thread
 import time
 from uuid import uuid4
 
@@ -29,7 +30,7 @@ FAKE_KEY = "release-test-key-not-a-real-secret"
 @pytest.fixture
 def provider():
     """Имитируем только провайдера; сохраняем запросы для проверки изоляции."""
-    state = {"mode": "ok", "calls": []}
+    state = {"mode": "ok", "calls": [], "entered": Event(), "release": Event()}
 
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, *_args):
@@ -44,6 +45,11 @@ def provider():
                 "payload": payload,
             })
             mode = state["mode"]
+            if mode == "hold":
+                # Даём тесту убить собственный backend ровно во время генерации,
+                # а не угадываем этот момент произвольной паузой.
+                state["entered"].set()
+                state["release"].wait(timeout=5)
             status = int(mode) if mode in {"401", "429", "503"} else 200
             context = json.loads(payload["messages"][-1]["content"])
             document = context["documents"][0]
@@ -74,6 +80,7 @@ def provider():
     try:
         yield state
     finally:
+        state["release"].set()
         server.shutdown()
         server.server_close()
         thread.join(timeout=5)
@@ -112,11 +119,16 @@ def release(tmp_path, provider):
     @contextmanager
     def start():
         """Останавливаем только собственный процесс, не рабочий прототип на 8000."""
+        process_env = dict(env)
+        if provider["mode"] == "hold":
+            # В тесте аварии ждём сигнал от провайдера, а не сетевой таймаут.
+            # Увеличение относится только к этому одноразовому процессу.
+            process_env.update(LLM_TIMEOUT_SECONDS="30", CORE_TIMEOUT_SECONDS="30")
         with (tmp_path / "backend.log").open("a", encoding="utf-8") as log:
             process = subprocess.Popen([
                 sys.executable, "-m", "uvicorn", "backend.app:create_app", "--factory",
                 "--host", "127.0.0.1", "--port", str(port),
-            ], cwd=ROOT, env=env, stdout=log, stderr=subprocess.STDOUT)
+            ], cwd=ROOT, env=process_env, stdout=log, stderr=subprocess.STDOUT)
             try:
                 deadline = time.monotonic() + 20
                 with httpx.Client(base_url=origin, timeout=5, trust_env=False) as probe:
@@ -131,7 +143,7 @@ def release(tmp_path, provider):
                             if time.monotonic() >= deadline:
                                 raise RuntimeError("Истекло ожидание тестового backend") from None
                             time.sleep(.05)
-                yield
+                yield process
             finally:
                 process.terminate()
                 try:
@@ -230,3 +242,33 @@ def test_release_provider_failure_saved_and_recoverable(release, provider, mode,
         assert recovered.status_code == 200, recovered.text
         context = json.loads(provider["calls"][-1]["payload"]["messages"][-1]["content"])
         assert context["history"] == []  # Неуспешный обмен хранится, но не идёт в модель.
+
+
+def test_release_abrupt_crash_during_generation_recovers_without_duplicate(release, provider):
+    """После SIGKILL processing становится failed, новая отправка не зависает."""
+    start, device = release
+    provider["mode"] = "hold"
+    with start() as process:
+        register(device)
+        dialog = device.post("/api/dialogs").json()["id"]
+        request_id = str(uuid4())
+        provider["mode"] = "hold"
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            pending = executor.submit(send, device, dialog, "Как стенд Гамма экспортирует отчёт в CSV?", request_id)
+            assert provider["entered"].wait(timeout=5)
+            # Это только Popen нашего теста; порт/процесс рабочего прототипа не затрагивается.
+            process.kill()
+            process.wait(timeout=5)
+            provider["release"].set()
+            with pytest.raises(httpx.TransportError):
+                pending.result(timeout=5)
+    provider["mode"] = "ok"
+    calls_before = len(provider["calls"])
+    with start():
+        messages = device.get(f"/api/dialogs/{dialog}").json()["messages"]
+        assert len(messages) == 1 and messages[0]["status"] == "failed"
+        assert len(provider["calls"]) == calls_before  # Автоповтора платного API нет.
+        assert send(device, dialog, "Как стенд Гамма экспортирует отчёт в CSV?", request_id).status_code == 409
+        assert send(device, dialog, "Как стенд Гамма экспортирует отчёт в CSV?").status_code == 200
+        messages = device.get(f"/api/dialogs/{dialog}").json()["messages"]
+        assert len(messages) == 3 and sum(item["role"] == "assistant" for item in messages) == 1
