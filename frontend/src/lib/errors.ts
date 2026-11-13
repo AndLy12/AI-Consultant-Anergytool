@@ -5,7 +5,7 @@
  * сценария: по требованиям кейса сбой API не должен выглядеть как «нет данных в базе».
  */
 
-import { ApiError, NetworkError } from '../api/client'
+import { ApiError, BadResponseError, NetworkError } from '../api/client'
 import { FIELD_LABEL, FIELD_ORDER } from './validation'
 import type { FieldErrors, FieldName } from './validation'
 
@@ -37,6 +37,10 @@ const MESSAGES: Record<string, string> = {
 export function describeError(error: unknown): string {
   if (error instanceof NetworkError) {
     return 'Нет связи с сервером. Проверьте, запущен ли backend, и повторите.'
+  }
+  if (error instanceof BadResponseError) {
+    // Содержимое такого ответа (HTML прокси) пользователю не показываем.
+    return 'Техническая ошибка, попробуйте ещё раз.'
   }
   if (error instanceof ApiError) {
     const known = MESSAGES[error.message]
@@ -122,7 +126,7 @@ export function fieldErrors(error: unknown): FieldErrors {
  * показывает «повторить», а не сообщение об отсутствии информации в базе.
  */
 export function isTechnicalFailure(error: unknown): boolean {
-  if (error instanceof NetworkError) return true
+  if (error instanceof NetworkError || error instanceof BadResponseError) return true
   return error instanceof ApiError && error.status >= 500
 }
 
@@ -130,7 +134,10 @@ export function isTechnicalFailure(error: unknown): boolean {
  * После 503 сообщение сохранено как failed, и backend требует НОВЫЙ request_id.
  * После сетевой ошибки результат запроса неизвестен, поэтому повтор идёт с ТЕМ ЖЕ
  * идентификатором: так backend вернёт уже сохранённый ответ и не вызовет модель дважды.
+ * Ответ не в формате JSON (например, HTML прокси) — тот же случай: до backend запрос
+ * мог дойти, а результат неизвестен. Если backend всё же отметил сообщение как failed,
+ * он ответит 409, и следующий повтор уже пойдёт с новым идентификатором.
  */
 export function needsNewRequestId(error: unknown): boolean {
-  return !(error instanceof NetworkError)
+  return !(error instanceof NetworkError || error instanceof BadResponseError)
 }

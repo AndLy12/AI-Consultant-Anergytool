@@ -39,6 +39,21 @@ export class NetworkError extends Error {
   }
 }
 
+/**
+ * Ответ пришёл, но это не JSON: например, HTML-страница ошибки прокси (502/504)
+ * или страница-заглушка вместо backend. Разобрать его нельзя, и неизвестно,
+ * успел ли backend выполнить запрос, поэтому это техническая ошибка.
+ */
+export class BadResponseError extends Error {
+  readonly status: number
+
+  constructor(status: number) {
+    super('Сервер прислал ответ в неожиданном формате')
+    this.name = 'BadResponseError'
+    this.status = status
+  }
+}
+
 let csrfToken = ''
 
 export function setCsrfToken(token: string): void {
@@ -78,7 +93,15 @@ async function request<T>(path: string, method = 'GET', body?: unknown): Promise
 
   if (response.status === 204) return null as T
   const text = await response.text()
-  const payload: unknown = text ? JSON.parse(text) : null
+  let payload: unknown = null
+  if (text) {
+    try {
+      payload = JSON.parse(text)
+    } catch {
+      // Раньше здесь вылетала ошибка разбора с английским текстом браузера.
+      throw new BadResponseError(response.status)
+    }
+  }
 
   if (!response.ok) {
     const { message, detail } = readDetail(payload)
