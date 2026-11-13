@@ -1,7 +1,7 @@
 """Production-frontend Даши + backend + ядро: прогон без dev-прокси.
 
 БД, порт и аккаунт сотрудника одноразовые. Используем исходные браузерные
-тесты Даши без правок, а настоящий API модели не вызываем ни в одном режиме.
+тесты Даши с уточнённым ожиданием ответа в isolation, а настоящий API модели не вызываем.
 """
 
 import argparse
@@ -68,10 +68,10 @@ def main():
                     '--email','reviewer@example.test'],cwd=ROOT,env=env,check=True)
                 subprocess.run([npm,'run','test:ui'],cwd=ROOT/'frontend',env=env,check=True)
                 # Отдельная регрессия нашей интеграции: форма до ответа модели.
-                # Тесты и исходники frontend остаются точной версией ветки Даши.
+                # Исходники frontend остаются точной версией ветки Даши.
                 subprocess.run([shutil.which('node'),'scripts/check_late_summary.mjs'],cwd=ROOT,env=env,check=True)
                 subprocess.run([npm,'run','test:staff'],cwd=ROOT/'frontend',env=env,check=True)
-                print(f'Full-stack browser checks OK: {mode}; original Dasha browser tests passed')
+                print(f'Full-stack browser checks OK: {mode}; Dasha browser checks passed')
             except Exception:
                 logfile.flush()
                 print((folder/'backend.log').read_text(encoding='utf-8'))
