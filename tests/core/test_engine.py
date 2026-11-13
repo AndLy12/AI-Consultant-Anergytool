@@ -272,7 +272,7 @@ def test_provider_pipeline_on_synthetic_document(tmp_path):
             'evidence': [{'chunk_id': doc['chunk_id'], 'quote': doc['text']}]}))
     core = EnergytoolCore(settings, client=QwenClient(settings, httpx.MockTransport(handler)))
     result = core.respond(CoreRequest(message='Как выгрузить отчёт Бета в CSV?'))
-    assert result.core_status == 'answered' and result.sources[0].title == 'synthetic'
+    assert result.core_status == 'answered' and result.sources[0].title == 'Учебные данные'
     assert 'CSV' in result.answer
 
 

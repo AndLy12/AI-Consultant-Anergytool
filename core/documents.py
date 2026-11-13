@@ -34,6 +34,7 @@ class Chunk:
     block: int
     start: int
     end: int
+    section_path: tuple[str, ...] = ()
 
 
 def clean_text(text: str) -> str:
@@ -42,19 +43,30 @@ def clean_text(text: str) -> str:
 
 
 def make_chunks(name: str, blocks: list[tuple[str, str | None, int | None]], size: int) -> list[Chunk]:
-    """Начинаем с абзацев и разделов; крупный абзац делим по ближайшему пробелу."""
+    """Сохраняем координаты и иерархию разделов; оформление без данных не индексируем.
+
+    Строки таблиц с буквами или числами остаются, даже если окружены дефисами.
+    Иерархия нужна поиску, чтобы вернуть условия из родительского раздела.
+    """
     digest = hashlib.sha256((name + '\n' + '\n'.join(b[0] for b in blocks)).encode()).hexdigest()[:20]
     doc_id = 'doc-' + digest
     title = Path(name).stem[:500] or 'Документ'
+    if Path(name).suffix.lower() == '.md':
+        heading = re.search(r'(?m)^#\s+([^\n]+)', '\n'.join(b[0] for b in blocks))
+        if heading:
+            title = heading[1].strip()[:500]
     chunks = []
     for block_index, (raw, initial_section, page) in enumerate(blocks):
         text = clean_text(raw)
         section = initial_section
+        section_path = [initial_section] if initial_section else []
         for paragraph in re.finditer(r'\S[\s\S]*?(?=\n\s*\n|\Z)', text):
             paragraph_text = paragraph.group().strip()
-            if paragraph_text.startswith('#'):
+            match = re.match(r'^(#{1,6})\s+([^\n]+)', paragraph_text)
+            if match:
                 heading, _, rest = paragraph_text.partition('\n')
                 section = heading.lstrip('#').strip()[:500]
+                section_path = section_path[:len(match[1]) - 1] + [section]
                 if not rest.strip():
                     continue
             start = paragraph.start()
@@ -66,12 +78,12 @@ def make_chunks(name: str, blocks: list[tuple[str, str | None, int | None]], siz
                     if boundary > start:
                         stop = boundary
                 fragment = text[start:stop].strip()
-                if fragment:
+                if any(char.isalnum() for char in fragment):
                     leading = len(text[start:stop]) - len(text[start:stop].lstrip())
                     left = start + leading
                     chunk_id = f'{doc_id}:b{block_index}:s{left}:e{left + len(fragment)}'
                     chunks.append(Chunk(doc_id, chunk_id, title, fragment, section, page,
-                                        block_index, left, left + len(fragment)))
+                                        block_index, left, left + len(fragment), tuple(section_path)))
                 start = stop
                 while start < end and text[start].isspace():
                     start += 1

@@ -1,0 +1,34 @@
+name: Knowledge base preparation
+
+on:
+  push:
+    paths:
+      - 'knowledge-base-work/**'
+      - '.github/workflows/knowledge-base.yml'
+  pull_request:
+    paths:
+      - 'knowledge-base-work/**'
+      - '.github/workflows/knowledge-base.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  preparation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    strategy:
+      matrix:
+        python: ['3.10', '3.12']
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      # Тесты используют вымышленные документы и не требуют закрытой базы/API.
+      - name: Test preparation and source annotations
+        working-directory: knowledge-base-work
+        run: python -m unittest discover -s tests -v
