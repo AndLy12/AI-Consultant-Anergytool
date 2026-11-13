@@ -4,7 +4,8 @@
 и React-интерфейс Даши из frontend-role4-ui собраны вместе. Docker строит
 frontend отдельным Node-этапом, FastAPI раздаёт готовую сборку с того же адреса,
 что и API. После запуска открыть http://localhost:8000 — dev-сервер Vite не нужен.
-Одна правка frontend исправляет позднее затирание вручную очищенного резюме.
+В frontend есть предварительная правка затирания очищенного резюме; на Linux CI
+сценарий пока не проходит и передан Даше для завершения исправления.
 Код ядра и исходные браузерные тесты Даши сохранены без изменений.
 
 Backend хранит аккаунты, сессии, историю и подтверждённые заявки. Ядро Данька
@@ -58,6 +59,7 @@ SQLite хранится в постоянном томе; down без --volumes 
 
 ```bash
 python -m pytest -q
+python -m pytest tests/test_release_integration.py -q
 CORE_MODE=real CORE_DEMO=true python -m backend.check_core --message 'Как экспортировать отчёт стенда Альфа?'
 python scripts/check_fullstack.py --mode demo
 ```
@@ -70,6 +72,11 @@ knowledge-base-work: `../.venv-core/bin/python -m unittest discover -s tests -v`
 pytest включает unittest и tests/core Данька. Старый baseline заменён: его CLI/HTTP
 тесты приведены к актуальному контракту. CI использует Python 3.12 и обе БД;
 Docker проверяет stub и demo отдельно. Python 3.10 к новому ядру не относится.
+
+`test_release_integration.py` проверяет отдельный процесс backend и настоящую
+фабрику ядра с локальным HTTP-имитатором провайдера: история, два устройства,
+перезапуск, заявка, повторы, ошибки доступа/сети и невалидный ответ. Ключ и база
+вымышленные; успешный прогон не доказывает качество и скорость настоящего Qwen.
 
 ## Материалы команды
 
