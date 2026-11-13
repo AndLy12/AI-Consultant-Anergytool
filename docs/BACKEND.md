@@ -103,6 +103,11 @@ python -m backend.manage grant-staff --email reviewer@example.test
 
 ## Замена БД
 
+Резервирование SQLite и проверка восстановления описаны в
+[BACKUP_AND_RESTORE.md](BACKUP_AND_RESTORE.md). Команда `python -m backend.backup`
+создаёт согласованный снимок с учётом WAL; восстановление допускается только
+в новый файл. Копия основного `.db` работающего приложения без WAL ненадёжна.
+
 Для пустой PostgreSQL задать
 `DATABASE_URL=postgresql+psycopg://USER:PASSWORD@HOST:5432/DATABASE`, затем
 `alembic upgrade head`. Драйвер уже установлен. Для сохранения данных SQLite

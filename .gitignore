@@ -32,4 +32,5 @@ coverage.xml
 submission*.csv
 *.report.json
 work/
+backups/
 *.tmp

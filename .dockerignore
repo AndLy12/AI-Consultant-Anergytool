@@ -24,6 +24,7 @@ examples
 *.md
 scripts
 **/node_modules
+backups/
 **/dist
 **/tests/shots
 **/.env
