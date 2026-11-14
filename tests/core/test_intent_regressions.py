@@ -119,3 +119,14 @@ def test_reranking_and_context_do_not_reintroduce_rejected_preparation(index, tm
     result = EnergytoolCore(cfg, chunks=index.chunks, client=Client()).respond(
         CoreRequest(message='Панели не нужны, нужен учёт. С чего начать?'))
     assert result.core_status == 'answered'
+
+
+def test_sufficiency_question_keeps_complete_preparation_requirements():
+    chunks = make_chunks('losses.md', [('# Поиск коммерческих потерь\n\nАрхив не менее года.', None, None)], 1800)
+    chunks += make_chunks('prep.md', [('# Подготовка\n\n## Для поиска коммерческих потерь\n\n'
+                                      'Идентификатор канала, суточные данные день/ночь.', None, None)], 1800)
+    request = CoreRequest(message='Архив за два года. Таких данных хватит?', history=[
+        {'role': 'user', 'content': 'Хотим находить потери.'},
+    ])
+    hits = SearchIndex(tuple(chunks)).search_request(request, 1)
+    assert hits[0].required and 'Идентификатор канала' in hits[0].chunk.text

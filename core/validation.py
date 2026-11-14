@@ -22,6 +22,7 @@ SUMMARY_DECLINED = re.compile(
 INLINE_ALIAS = re.compile(r'\s*(?:\((D\d+(?:\s*,\s*D\d+)*)\)|\[(D\d+(?:\s*,\s*D\d+)*)\])')
 EMBEDDED_QUESTION = re.compile(
     r'\b(?:уточните|подскажите|сообщите|укажите|назовите)\s*[,—:-]?\s*'
+    r'(?:(?:ваш\w*|сво\w*|примерн\w*|присоедин[её]нн\w*|текущ\w*|общ\w*|месячн\w*)\s+){0,3}'
     r'(?:как\w*|сколько|есть\s+ли|где\b|что\b|тип\w*|модел\w*|материал\w*|'
     r'возраст\w*|площад\w*|регион\w*|мощност\w*|потреблен\w*|количеств\w*|'
     r'схем\w*|профил\w*|цел\w*|объ[её]м\w*)', re.I)
@@ -174,7 +175,10 @@ def assemble(raw, chunks, request, *, demo=False, truncated=False, secret='') ->
             r'(?:коммерческ\w*\s+уч[её]т|начислен\w*)[^.!?\n]{0,180}'
             r'после\s+(?:обязательн\w*\s+)?верификац|'
             r'после\s+верификац[^.!?\n]{0,180}(?:коммерческ\w*\s+уч[её]т|начислен)', answer, re.I)
-        if photo_docs and re.search(r'\bпоказан', answer, re.I) and not commercial_verification:
+        hardware_question = (re.search(r'год|выпуск|серийн|штрих', request.message, re.I)
+                             and not re.search(r'показан|коммерческ|начисл|точност', request.message, re.I))
+        if (photo_docs and re.search(r'\bпоказан', answer, re.I) and not commercial_verification
+                and (not hardware_question or re.search(r'коммерческ|начисл', answer, re.I))):
             # Ограничение коммерческого использования обязательно для показаний.
             # Проверка серийного номера не заменяет условие коммерческого учёта.
             # Добавляем только точный фрагмент того же продукта из текущего

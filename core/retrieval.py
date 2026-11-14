@@ -7,7 +7,7 @@ from rank_bm25 import BM25Plus
 
 from core.documents import Chunk
 from core.dialogue import (search_query, search_intent, load_profile_question,
-                          data_checklist_question, PREPARATION_SECTIONS)
+                          data_checklist_question, data_sufficiency_question, PREPARATION_SECTIONS)
 
 TOKEN = re.compile(r'[a-zа-яё0-9]+', re.IGNORECASE)
 STOP = {'и', 'в', 'во', 'на', 'с', 'со', 'к', 'ко', 'о', 'об', 'по', 'из', 'для',
@@ -147,7 +147,8 @@ class SearchIndex:
         ranked = tuple(h for h in self.search(query, len(self.sections)) if self.allowed(h.chunk, intent))
         hits = ranked[:top_k]
         checklist_found = False
-        planning = data_checklist_question(request.message)
+        planning = (data_checklist_question(request.message)
+                    or data_sufficiency_question(request.message))
         titles = intent.active
         if titles:
             # Сначала ранжируем по самому вопросу, затем выбираем лучшие

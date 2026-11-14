@@ -74,6 +74,15 @@ def test_serial_number_verification_does_not_replace_commercial_caveat():
     assert chunks[1].chunk_id in {s.chunk_id for s in result.sources}
 
 
+def test_parameter_request_with_possessive_is_not_duplicated():
+    chunks = make_chunks('training.md', [('Доступ зависит от мощности.', None, None)], 1800)
+    answer = 'Для начала уточните вашу присоединённую мощность: от неё зависит доступ.'
+    result = assemble({'status': 'answered', 'answer': answer, 'evidence': ['D1'],
+                       'question': 'Какова ваша присоединённая мощность?'}, chunks,
+                      CoreRequest(message='Можно подключить?'))
+    assert result.answer == answer
+
+
 def test_review_transport_error_preserves_answer_and_reports_timing(tmp_path, caplog):
     chunks = make_chunks('training.md', [('Учебный учёт доступен.', None, None)], 1800)
     class Client:
