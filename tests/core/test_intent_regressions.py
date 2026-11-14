@@ -130,3 +130,15 @@ def test_sufficiency_question_keeps_complete_preparation_requirements():
     ])
     hits = SearchIndex(tuple(chunks)).search_request(request, 1)
     assert hits[0].required and 'Идентификатор канала' in hits[0].chunk.text
+
+
+def test_reactive_energy_question_is_not_forced_to_cloud_platform(index):
+    chunks = make_chunks('reactive.md', [('# Реактивная энергия\n\nУчёт реактивной энергии.', None, None)], 1800)
+    hits = SearchIndex((*index.chunks, *chunks)).search_request(
+        CoreRequest(message='Что такое учёт реактивной энергии?'), 1)
+    assert hits[0].chunk.title == 'Реактивная энергия'
+
+
+def test_water_reading_verb_selects_recognition_instead_of_electricity_platform(index):
+    hits = index.search_request(CoreRequest(message='У нас учёт воды. Как распознавать показания?'), 1)
+    assert hits[0].chunk.title == 'Распознавание показаний'
