@@ -118,8 +118,11 @@ def prepare(archive_path: Path, source_dir: Path, artifacts_dir: Path) -> dict:
     originals: dict[str, bytes] = {}
     with zipfile.ZipFile(archive_path) as archive:
         for member in archive.infolist():
-            path = PurePosixPath(member.filename)
-            if path.is_absolute() or ".." in path.parts or "\\" in member.filename or ":" in member.filename:
+            # При чтении ZIP Windows нормализует обратный слеш в filename;
+            # orig_filename сохраняет исходное имя для одинаковой проверки на всех ОС.
+            original_name = member.orig_filename
+            path = PurePosixPath(original_name)
+            if path.is_absolute() or ".." in path.parts or "\\" in original_name or ":" in original_name:
                 raise ValueError("Недопустимый путь в архиве")
             if stat.S_ISLNK(member.external_attr >> 16):
                 raise ValueError("Символические ссылки в архиве не поддерживаются")

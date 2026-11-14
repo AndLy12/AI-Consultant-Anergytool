@@ -1,0 +1,15 @@
+# Дополнение только для настоящей закрытой базы: не копируем её в образ или Git.
+# Запуск: docker compose -f compose.yaml -f compose.knowledge.yaml up --build --wait
+services:
+  backend:
+    environment:
+      CORE_MODE: real
+      CORE_DEMO: "false"
+      DATA_DIR: /knowledge
+    volumes:
+      - type: bind
+        source: ${KNOWLEDGE_DIR:?Укажите абсолютный путь к закрытой базе в KNOWLEDGE_DIR}
+        target: /knowledge
+        read_only: true
+        bind:
+          create_host_path: false

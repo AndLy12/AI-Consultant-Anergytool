@@ -1,4 +1,10 @@
 const $ = id => document.getElementById(id);
+// Режим фабрики real не означает, что вызывается Qwen: показываем отдельный demo-флаг.
+fetch('/health').then(r=>r.json()).then(h=>{
+  $('core-mode').textContent=h.core_demo?'Подключено ядро Данька: demo-база и тестовая модель, без Qwen.':
+    h.core_mode==='stub'?'Тестовый режим backend: ядро не используется.':
+    h.core_ready?'Ядро подключено. Доступность модели проверяется при отправке сообщения.':'Ядро пока не подключено.';
+}).catch(()=>{$('core-mode').textContent='Не удалось проверить состояние сервера.';});
 let csrf = '', active = null, card = null;
 async function api(path, method='GET', body) {
   const response = await fetch('/api'+path, {method, credentials:'same-origin', headers:{'Content-Type':'application/json', 'X-CSRF-Token':csrf}, body:body === undefined ? undefined : JSON.stringify(body)});

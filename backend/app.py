@@ -13,6 +13,7 @@ from threading import Lock
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 from uuid import UUID
+from pathlib import Path
 
 from fastapi import Depends, FastAPI, HTTPException, Request, Response
 from fastapi.responses import FileResponse
@@ -78,6 +79,15 @@ class Confirmation(Input):
 
 def create_app(database_url=None, core=None):
     """Создаём приложение; тесты могут подставить отдельную БД и тестовое ядро."""
+    # Код Даши не меняем: раздаём результат её сборки с того же origin, что и API.
+    # В Docker каталог задаётся явно; локально используем frontend/dist после npm run build.
+    configured_frontend = os.getenv("FRONTEND_DIST", "").strip()
+    frontend_dist = (Path(configured_frontend).expanduser().resolve() if configured_frontend else
+                     Path(__file__).resolve().parents[1] / "frontend" / "dist")
+    frontend_ready = (frontend_dist / "index.html").is_file() and (frontend_dist / "assets").is_dir()
+    if configured_frontend and not frontend_ready:
+        # Явно заказанная production-сборка не должна незаметно подменяться заглушкой.
+        raise RuntimeError("FRONTEND_DIST must contain a built index.html and assets directory")
     engine = db.make_engine(database_url)
 
     @asynccontextmanager
@@ -92,16 +102,21 @@ def create_app(database_url=None, core=None):
         try:
             yield
         finally:
-            # Адаптер владеет отдельным async-циклом и закрывает его вместе с приложением.
-            from backend.legacy_core import AsyncConsultantAdapter
+            # Закрываем и async-адаптер, и синхронное ядро Данька через их
+            # необязательный close(). Соединения не должны переживать приложение.
             try:
-                if isinstance(app.state.core, AsyncConsultantAdapter):
-                    app.state.core.close()
+                close = getattr(app.state.core, "close", None)
+                if callable(close):
+                    close()
             finally:
                 engine.dispose()
 
     app = FastAPI(title="Energytool backend", version="1.0.0", lifespan=lifespan)
     app.state.engine = engine
+    from alembic.config import Config
+    from alembic.script import ScriptDirectory
+    migration_config = Config(str(Path(__file__).resolve().parents[1] / "alembic.ini"))
+    expected_revision = ScriptDirectory.from_config(migration_config).get_current_head()
     cookie_secure = os.getenv("COOKIE_SECURE", "false").lower() == "true"
     allowed_origin = os.getenv("APP_ORIGIN", "http://localhost:8000").rstrip("/")
     attempts, attempts_lock = defaultdict(deque), Lock()
@@ -186,7 +201,36 @@ def create_app(database_url=None, core=None):
         # Проверяем доступность схемы БД; этот маршрут не проверяет реальный вызов Qwen.
         with engine.connect() as connection:
             connection.execute(select(db.users.c.id).limit(1))
-        return {"status": "ok", "core_mode": os.getenv("CORE_MODE", "real")}
+        # real означает загрузку фабрики, но не обязательно настоящую модель:
+        # у Данька CORE_DEMO=true включает синтетическую базу и тестовый клиент.
+        from backend.core import MissingCore
+        demo = bool(getattr(getattr(app.state.core, "settings", None), "demo", False))
+        return {"status": "ok", "core_mode": os.getenv("CORE_MODE", "real"),
+                "core_demo": demo, "core_ready": not isinstance(app.state.core, MissingCore),
+                "frontend": "react" if frontend_ready else "diagnostic"}
+
+    @app.get("/ready")
+    def ready():
+        """Готовность локальных компонентов, без платных запросов и деталей ошибок БД."""
+        from alembic.runtime.migration import MigrationContext
+        from sqlalchemy.exc import SQLAlchemyError
+        from fastapi.responses import JSONResponse
+        from backend.core import MissingCore
+        database_ready = False
+        try:
+            with engine.connect() as connection:
+                connection.execute(select(db.users.c.id).limit(1))
+                database_ready = MigrationContext.configure(connection).get_current_heads() == (expected_revision,)
+        except SQLAlchemyError:
+            # URL/параметры драйвера не попадают в публичную диагностику.
+            pass
+        core_ready = not isinstance(app.state.core, MissingCore)
+        is_ready = database_ready and core_ready
+        demo = bool(getattr(getattr(app.state.core, "settings", None), "demo", False))
+        return JSONResponse({"status": "ready" if is_ready else "not_ready",
+                             "checks": {"database": database_ready, "core": core_ready},
+                             "core_mode": os.getenv("CORE_MODE", "real"), "core_demo": demo,
+                             "provider_checked": False}, status_code=200 if is_ready else 503)
 
     @app.post("/api/auth/register", status_code=201)
     def register(body: Credentials, response: Response):
@@ -405,9 +449,15 @@ def create_app(database_url=None, core=None):
 
     @app.get("/")
     def index():
-        # Проверочный frontend раздаётся с того же origin, что и API: отдельный CORS не нужен.
+        if frontend_ready:
+            return FileResponse(frontend_dist / "index.html")
+        # Разработка API возможна и без Node-сборки: сохраняем диагностическую страницу.
         return FileResponse(os.path.join(os.path.dirname(__file__), "static", "index.html"))
 
     from fastapi.staticfiles import StaticFiles
+    if frontend_ready:
+        # Только публичные assets, а не весь каталог проекта или база. Не добавляем
+        # SPA fallback для /api: неизвестный метод должен оставаться честным 404.
+        app.mount("/assets", StaticFiles(directory=frontend_dist / "assets"), name="frontend-assets")
     app.mount("/static", StaticFiles(directory=os.path.join(os.path.dirname(__file__), "static")), name="static")
     return app

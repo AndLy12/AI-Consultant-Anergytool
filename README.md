@@ -1,105 +1,101 @@
-# AI Consultant for Energytool
+# МТС Energytool — веб-прототип и общее ядро
 
-## Веб-прототип через Docker
+Интеграционная версия от 13 ноября: ядро Данька из codex/core-knowledge-base
+и React-интерфейс Даши из frontend-role4-ui собраны вместе. Docker строит
+frontend отдельным Node-этапом, FastAPI раздаёт готовую сборку с того же адреса,
+что и API. После запуска открыть http://localhost:8000 — dev-сервер Vite не нужен.
+14 ноября подключлено исправление Даши fb989a4: автозаполнение резюме больше
+не подменяет ручные значения или отправленную пустую форму поздним ответом.
+Код ядра и исходные браузерные тесты Даши сохранены без изменений.
 
-Из чистой копии с запущенным Docker Engine/Compose v2:
+Backend хранит аккаунты, сессии, историю и подтверждённые заявки. Ядро Данька
+подключено через consultant_core.create_core(); тот же код используется solution.py.
+Каталог core, фабрика, платформенный скрипт и сборщик перенесены без изменений.
 
-```bash
-docker compose up --build --wait
-```
+## Три режима
 
-Открыть http://localhost:8000. Первый запуск без `.env` работает с явной заглушкой
-ядра. Аккаунты, история и заявки сохраняются в Docker volume. Ключи Qwen и база
-знаний для проверки backend не нужны. Подробности: [Docker](docs/DOCKER_GUIDE.md),
-[инструкции backend](docs/BACKEND.md), [описание PR](docs/PR_DESCRIPTION.md).
+| Настройки | Результат |
+| --- | --- |
+| CORE_MODE=stub | Backend с постоянным тестовым ответом, без ядра |
+| CORE_MODE=real, CORE_DEMO=true | Ядро, BM25 и цитаты; вымышленные документы и тестовая модель |
+| CORE_MODE=real, CORE_DEMO=false | Закрытая база и Qwen API; нужны настройки провайдера |
 
-Каталог `core/` из командного main сохранён. Backend-заглушка заменена версией
-с аккаунтами и заявками. `backend.main:create_app` и `python run.py` запускают
-новую реализацию; старые `/api/chats` заменены `/api/dialogs` (см. docs/BACKEND.md).
-После установки requirements-web.txt можно запустить `CORE_MODE=stub python run.py`;
-миграции будут применены автоматически. Устанавливать два разных набора backend
-зависимостей не нужно: requirements-backend.txt теперь ссылается на requirements-web.txt.
+real означает загрузку фабрики, не доказательство вызова Qwen. Demo виден в UI и /health.
 
-## Backend роли 1
-
-Запуск веб-прототипа: [docs/BACKEND.md](docs/BACKEND.md).
-Решения: [docs/DECISIONS.md](docs/DECISIONS.md).
-Коллеге по роли 2: [docs/CORE_INTEGRATION.md](docs/CORE_INTEGRATION.md).
-Статус: [docs/ROLE1_STATUS.md](docs/ROLE1_STATUS.md).
-
-Реализованы аккаунты, история с разных устройств, API диалогов, подтверждение
-карточки заявки, доступ сотрудника, миграции и проверочный интерфейс.
-Ядро коллеги ещё не подключено. `CORE_MODE=stub` включает явную заглушку для
-проверки backend, а не RAG-консультанта.
-
-Ниже описан ранний solution.py — заготовка роли 2, не принятый платформой сабмит.
-requirements.txt относится к нему; веб-зависимости — requirements-web.txt.
-
-Воспроизводимый baseline первого этапа: решение читает вопросы, извлекает
-релевантные фрагменты базы знаний, при наличии настроек обращается к
-OpenAI-совместимой модели и создаёт `submission.csv`.
-
-## Быстрый запуск
-
-Требуется Python 3.10 или новее. Внешних зависимостей у baseline нет.
+## Локально: Python 3.12
 
 ```bash
-python solution.py --questions examples/questions.csv --output submission.csv
+python3.12 -m venv .venv-core
+source .venv-core/bin/activate
+pip install -r requirements-dev.txt
+CORE_MODE=real CORE_DEMO=true python run.py
 ```
 
-Для запуска с моделью:
+В текущем checkout .venv-core уже создана на Python 3.12; прежняя .venv на 3.14
+сохранена. Открыть http://localhost:8000. Вопрос: «Как экспортировать отчёт стенда
+Альфа в CSV?». Миграции применяются автоматически, аккаунты/история остаются в SQLite.
+
+## Docker
+
+Чистая копия без .env запускается с заглушкой: `docker compose up --build --wait`.
+Для подключённого demo-ядра:
 
 ```bash
-export DATA_DIR=/path/to/data
-export LLM_BASE_URL=https://provider.example
-export LLM_API_KEY=secret
-export LLM_MODEL=model-name
-python solution.py
+CORE_MODE=real CORE_DEMO=true docker compose up --build --wait
 ```
 
-Если параметры модели не заданы, решение всё равно формирует непустые ответы:
-возвращает наиболее релевантный фрагмент базы или просит уточнить вопрос.
-
-## Переменные окружения
-
-| Переменная | Назначение | Значение по умолчанию |
-| --- | --- | --- |
-| `DATA_DIR` | Каталог с `questions.csv` и базой знаний | текущий каталог |
-| `QUESTIONS_PATH` | Явный путь к файлу вопросов | `DATA_DIR/questions.csv` |
-| `OUTPUT_PATH` | Путь результата | `submission.csv` |
-| `LLM_BASE_URL` | URL OpenAI-совместимого API | не задан |
-| `LLM_API_KEY` | Ключ API | не задан |
-| `LLM_MODEL` | Имя модели | не задано |
-| `TOP_K` | Число фрагментов контекста | `4` |
-
-Также поддерживаются стандартные альтернативы `OPENAI_BASE_URL`,
-`OPENAI_API_KEY`, `OPENAI_MODEL`.
-
-## Формат данных
-
-Входной CSV обязан иметь колонку `id` и одну из колонок `question`, `query`,
-`text`, `message`. Опционально поддерживается история в `history`, `dialogue`
-или `context`. База знаний первого baseline: файлы `.txt`, `.md`, `.csv` и
-`.json` внутри `DATA_DIR`.
-
-Выход всегда имеет только две колонки:
-
-```csv
-id,answer
-1,Текст ответа
-```
-
-## Проверка
-
-**Всем участникам: [простая инструкция по тестам и CI](tests/README.md).**
-`Project checks` проверяет скрипт сабмита на Python 3.10 и 3.12, а
-`Backend SQLite and PostgreSQL` — полный проект на обеих БД.
-Сценарии ручной оценки: [tests/QUALITY_CASES.md](tests/QUALITY_CASES.md).
+Для настоящей базы задайте LLM_BASE_URL, LLM_API_KEY, LLM_MODEL и KNOWLEDGE_DIR —
+абсолютный путь к закрытой папке с knowledge-base.zip или каталогом knowledge-base:
 
 ```bash
-python -m unittest discover -s tests -v
-python solution.py --questions examples/questions.csv --output /tmp/submission.csv
+docker compose -f compose.yaml -f compose.knowledge.yaml up --build --wait
 ```
 
-Архитектурные границы для параллельной работы описаны в
-[`ARCHITECTURE.md`](ARCHITECTURE.md), а текущая доска — в [`TASKS.md`](TASKS.md).
+Дополнение подключает базу read-only и отключает demo. Документы и ключи не
+попадают в образ. Новый код/окружение применяйте через up, простой restart их не обновит.
+SQLite хранится в постоянном томе; down без --volumes сохраняет данные.
+
+## Проверки
+
+```bash
+python -m pytest -q
+python -m pytest tests/test_release_integration.py -q
+CORE_MODE=real CORE_DEMO=true python -m backend.check_core --message 'Как экспортировать отчёт стенда Альфа?'
+python scripts/check_fullstack.py --mode demo
+```
+
+Для браузерного прогона нужны `npm ci` в frontend и браузер Playwright либо
+системный Chrome/Edge; скрипт собирает React и создаёт отдельные БД/сервер/порт.
+Состояние обычного приложения он не использует.
+Прогон также включает три управляемых сценария задержки ответа перед получением
+резюме (scripts/check_late_summary.mjs), отдельно от исходных тестов Даши.
+Для инструментов базы из
+knowledge-base-work: `../.venv-core/bin/python -m unittest discover -s tests -v`.
+
+pytest включает unittest и tests/core Данька. Старый baseline заменён: его CLI/HTTP
+тесты приведены к актуальному контракту. CI использует Python 3.12 и обе БД;
+Docker проверяет stub и demo отдельно. Python 3.10 к новому ядру не относится.
+
+`test_release_integration.py` проверяет отдельный процесс backend и настоящую
+фабрику ядра с локальным HTTP-имитатором провайдера: история, два устройства,
+перезапуск, заявка, повторы, ошибки доступа/сети и невалидный ответ. Ключ и база
+вымышленные; успешный прогон не доказывает качество и скорость настоящего Qwen.
+
+## Материалы команды
+
+- [Backend и API](docs/BACKEND.md).
+- [HTTP-контракт v1](docs/API_CONTRACT.md).
+- [Резервная копия и восстановление SQLite](docs/BACKUP_AND_RESTORE.md).
+- [Контракт подключения ядра](docs/CORE_INTEGRATION.md).
+- [Фактический результат интеграции](docs/CORE_INTEGRATION_RESULT.md).
+- [Описание ядра Данька](core/README.md).
+- [Архитектурные решения](docs/DECISIONS.md).
+
+Frontend Даши подключается к /api/auth/* и /api/dialogs/*. Черновик резюме ядра
+не создаёт заявку: пользователь подтверждает карточку, backend выполняет запись.
+Реальный Qwen пока не проверен: локально нет адреса, ключа и модели. CRM, почта
+и авторизация МТС не подключены. Настоящие данные и секреты не публикуются.
+
+Платформенный requirements.txt использует Pydantic 2.14.2, веб-lock — 2.14.3;
+не устанавливайте их одновременно в одно окружение. Платформенная оценка и
+полный запуск на реальном API не подтверждены интеграционными тестами.
