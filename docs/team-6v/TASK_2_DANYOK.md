@@ -13,6 +13,12 @@
 
 ## Твоя зона
 
+Границы с ребятами закреплены в [FILE_OWNERSHIP.md](FILE_OWNERSHIP.md).
+Новые регрессии Данька — `tests/core/test_intent_regressions.py` и
+`tests/core/test_dialogue_quality.py`. Новые `test_role3_*.py`, скрипты коллеги три
+и личные отчёты ребят не редактируй параллельно с их авторами.
+Общие задания и итоговую интеграцию ведёшь ты. По текущему запросу ZIP не собираем.
+
 `core/dialogue.py`, `retrieval.py`, `prompts.py`, `validation.py`, `engine.py`,
 `llm.py`, `config.py`, соответствующие тесты ядра и при необходимости `solution.py`.
 В первую очередь менять только файлы, необходимые текущему исправлению.
