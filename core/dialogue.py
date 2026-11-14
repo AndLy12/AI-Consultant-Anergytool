@@ -1,10 +1,132 @@
-"""История одного запроса: разбор платформенной строки и ограничение контекста."""
+"""История запроса: разбор CSV-диалога, поисковое намерение и выдержки для черновика."""
 
 import json
 import re
+from dataclasses import dataclass
 from core_contract import CoreRequest, Turn
 
 ROLE_LINE = re.compile(r'^\s*(user|пользователь|клиент|assistant|ассистент|консультант)\s*:\s*(.*)$', re.IGNORECASE)
+
+# Каталог нужен и поиску, и разбору намерения: два разных словаря расходились бы
+# на отрицаниях. Это ограниченная эвристика, а не универсальный разбор русского языка.
+TOPICS = (
+    (r'автоматическ\w* уч[её]т|автоматизи\w* сбор|аскуэ|по цехам|по арендатор|облачн\w* платформ|платформ\w* уч[её]т|\bsim\b|сим[- ]карт|симки|\bуч[её]т\b(?!\s+(?:вод|тепл|газ))', 'облачная платформа'),
+    (r'\bфото\b|фотограф|снимк|распознаван', 'распознавание показаний'),
+    (r'солнечн|фотоэлектр|панел|крыш|кровл|скат|фасад', 'солнечные электростанции'),
+    (r'ценов\w* категори', 'ценовые категории'),
+    (r'оптов\w* рын|орэм', 'выход на оптовый рынок'),
+    (r'коммерческ\w* потер|находить потери|хищени', 'поиск коммерческих потерь'),
+)
+PREPARATION_SECTIONS = {
+    'облачная платформа': 'для платформы учёта',
+    'солнечные электростанции': 'для солнечной станции',
+    'распознавание показаний': 'для распознавания показаний',
+    'поиск коммерческих потерь': 'для поиска коммерческих потерь',
+    'выход на оптовый рынок': 'для анализа затрат и выхода на оптовый рынок',
+}
+CLAUSES = re.compile(r'[.!?;,\n]+|\s+\b(?:но|зато|а(?!\s+не\b))\b\s+', re.I)
+RETURN_FIRST = re.compile(r'верн\w*[^.!?\n]{0,50}к\s+перв\w*\s+(?:вопрос|тем|вариант)', re.I)
+REFUSAL = re.compile(r'\bне\s+(?:нуж\w*|надо|интерес\w*|рассматрива\w*|планиру\w*|хот\w*|требу\w*)\b|\bотказ\w*\s+от\b', re.I)
+DOUBLE_NEGATION = re.compile(r'\bне\s+(?:(?:мож\w*|буд\w*|хот\w*)\s+)?отказ\w*\s+от\b|\bне\s+переста\w*\s+рассматрива\w*', re.I)
+PROPERTY_ACTION = re.compile(r'менять|замен\w*|покупать|устанавливать|передавать|оплачивать|подключать', re.I)
+
+
+@dataclass(frozen=True)
+class SearchIntent:
+    """Только поисковые признаки; они не заменяют исходные слова и факты клиента."""
+    active: tuple[str, ...]
+    excluded: tuple[str, ...]
+    query: str
+
+
+def _topic_events(text: str):
+    """Разбираем отказ в пределах части фразы, сохраняя отрицательные свойства.
+
+    «Не нужны панели» исключает продукт; «SIM менять не нужно» — действие.
+    Общий отказ от перечисления относится к каждому названному продукту.
+    Неуверенные конструкции остаются поисковыми данными, не доказанными фактами.
+    """
+    for clause in CLAUSES.split(text):
+        found = [(title, re.search(pattern, clause, re.I)) for pattern, title in TOPICS]
+        if (re.search(r'един\w*\s+кабинет', clause, re.I)
+                and re.search(r'прибор|сч[её]тчик|показан|электр|арендатор|энерго', text, re.I)
+                and not any(title == 'облачная платформа' and match for title, match in found)):
+            found.append(('облачная платформа', re.search(r'един\w*\s+кабинет', clause, re.I)))
+        refusal = bool(REFUSAL.search(clause) and not DOUBLE_NEGATION.search(clause)
+                       and not PROPERTY_ACTION.search(clause))
+        for title, match in sorted((item for item in found if item[1]), key=lambda item: item[1].start()):
+            prefix = clause[:match.start()]
+            # «Не только X» не равно «не X». Простое «не X, а Y» обрабатывается
+            # до BM25; удаление всех предложений со словом «не» потеряло бы свойства.
+            direct = bool(re.search(r'\b(?:не|без)\s+$', prefix, re.I))
+            yield title, not (refusal or direct), clause.strip()
+
+
+def search_intent(request: CoreRequest) -> SearchIntent:
+    """Последняя пользовательская тема имеет приоритет перед предположением ассистента.
+
+    Исключения действуют до явного повторного включения. Для смешанного сбора
+    учёт и фото сохраняются вместе, пока клиент не переключил продукт.
+    Вопрос о категории связывается с коротким пользовательским ответом без
+    копирования утверждений ассистента. История генерации сохраняет роли.
+    """
+    texts = []
+    questions = []
+    last_question = ''
+    for turn in [*request.history, Turn(role='user', content=request.message)]:
+        if turn.role == 'assistant':
+            match = re.search(r'([^.!?\n]{1,300})\?\s*$', turn.content)
+            last_question = match[1] if match else ''
+        else:
+            texts.append(turn.content)
+            questions.append(last_question)
+            last_question = ''
+    excluded = set()
+    active = []
+    first = ()
+    for text, question in zip(texts, questions):
+        events = list(_topic_events(text))
+        positive = list(dict.fromkeys(title for title, enabled, _ in events if enabled))
+        if (not events and re.search(r'ценов\w*\s+категори', question, re.I)
+                and re.search(r'перв\w*|втор\w*|трет\w*|четв[её]рт\w*|пят\w*|шест\w*|\b[1-6](?:-?[яй])?\b', text, re.I)):
+            # Короткий ответ подтверждает тему вопроса, но не утверждения
+            # ассистента о мощности или порогах. В BM25 попадёт лишь имя темы.
+            positive = ['ценовые категории']
+        if not first and positive:
+            first = tuple(positive)
+        if RETURN_FIRST.search(text) and not positive:
+            positive = list(first)
+            excluded.difference_update(positive)
+        for title, enabled, _ in events:
+            if enabled:
+                excluded.discard(title)
+            else:
+                excluded.add(title)
+        if positive:
+            linked = set(active + positive)
+            if (linked <= {'облачная платформа', 'распознавание показаний'}
+                    and not re.search(r'теперь|вместо|только|переключ|не\s+нуж', text, re.I)):
+                active = list(dict.fromkeys(active + positive))
+            else:
+                active = positive
+        active = [title for title in active if title not in excluded]
+    allowed = set(active)
+
+    def relevant(text):
+        parts = []
+        for clause in CLAUSES.split(text):
+            events = list(_topic_events(clause))
+            mentioned = {title for title, _, _ in events}
+            if (not mentioned or mentioned & allowed) and not mentioned & excluded:
+                parts.append(clause.strip())
+        return '. '.join(part for part in parts if part)
+
+    current = relevant(request.message)
+    previous = [relevant(text) for text in texts[:-1]][-3:]
+    # Не передаём сырые утверждения ассистента в BM25: его прежняя ошибка
+    # иначе становится дополнительным основанием для неверного продукта.
+    query = (current + '\n') * 3 + '\n'.join(previous)[-6000:] + '\n' + ' '.join(active)
+    return SearchIntent(tuple(active), tuple(sorted(excluded)), query)
 
 
 def parse_question(text: str) -> CoreRequest:
@@ -59,23 +181,82 @@ def bounded_history(request: CoreRequest, budget: int) -> tuple[list[dict], bool
     return chosen, len(chosen) != len(request.history)
 
 
+def summary_excerpts(texts: list[str]) -> list[str]:
+    """Для явных поправок не копируем прежнее значение в запасной черновик.
+
+    Обрабатываем только названные с единицами параметры и явную коррекцию.
+    Каждый результат — исходная выдержка; разные объекты и неопределённые ссылки
+    не сводим к одному значению. Это не замена смысловой проверке резюме моделью.
+    """
+    correction = re.compile(r'исправля\w*|поправ\w*|уточняю|ошибся|ошиблась', re.I)
+    if not any(correction.search(text) for text in texts):
+        return texts
+    quantity = r'\d+(?:[.,]\d+)?\s*(?:(?:тыс(?:яч\w*)?\.?|млн|миллион\w*)\s*)?'
+    patterns = (
+        ('consumption', re.compile(r'(?:потреблен\w*\s*[:—-]?\s*)?' + quantity +
+            r'(?:[км]вт\s*[·⋅*-]?\s*ч|киловатт[- ]?час\w*|мегаватт[- ]?час\w*)'
+            r'(?:\s*(?:в|за|/)\s*(?:месяц\w*|год\w*|сут\w*))?', re.I)),
+        ('power', re.compile(r'(?:мощност\w*\s*[:—-]?\s*)?' + quantity +
+            r'(?:[км]вт(?!\s*[·⋅*-]?\s*ч\b)|киловатт\w*(?![- ]час)|мегаватт\w*(?![- ]час))\b', re.I)),
+        ('object', re.compile(r'\b(?:склад\w*|завод\w*|производств\w*|офис\w*|магазин\w*|бизнес[- ]центр\w*)\b', re.I)),
+        ('metering', re.compile(r'\b(?:ручн\w*|автоматическ\w*|автоматизированн\w*)\s+'
+                               r'(?:сбор\w*(?:\s+показан\w*)?|уч[её]т\w*)|\bАСКУЭ\b', re.I)),
+    )
+    records = []
+    for text in texts:
+        # У разных объектов одноимённые параметры не являются противоречием.
+        # Для таких поправок оставляем исходную хронологию для ручного разбора.
+        if correction.search(text) and re.search(r'перв\w*|втор\w*|друг\w*|одн\w*\s+из', text, re.I):
+            return texts
+        facts = []
+        for slot, pattern in patterns:
+            facts.extend((slot, match.group(), match.start(), match.end()) for match in pattern.finditer(text))
+        # КВт·ч нельзя одновременно принять за мощность, в том числе при
+        # написании единицы словами. Более длинный показатель имеет приоритет.
+        facts = [fact for fact in facts if fact[0] != 'power' or not any(
+            other[0] == 'consumption' and other[2] <= fact[2] < other[3] for other in facts)]
+        if correction.search(text):
+            replaced = {slot for slot, _, _, _ in facts}
+            records = [(slot, quote) for slot, quote in records if slot not in replaced]
+        # Не разрываем десятичные числа и «тыс.» внутри уже найденной величины.
+        boundaries = [0]
+        for match in re.finditer(r'[.!?;,\n]+', text):
+            if any(start <= match.start() < end for _, _, start, end in facts):
+                continue
+            boundaries.extend((match.start(), match.end()))
+        boundaries.append(len(text))
+        for start, end in zip(boundaries[::2], boundaries[1::2]):
+            clause = text[start:end]
+            clause = clause.strip()
+            if not clause:
+                continue
+            present = [(slot, quote) for slot, quote, _, _ in facts if quote in clause]
+            records.extend(present or [(None, clause)])
+    return list(dict.fromkeys(quote for _, quote in records))
+
+
 def search_query(request: CoreRequest) -> str:
-    """Короткая реплика вроде «а ограничения?» получает тему из последних user-реплик."""
-    previous = [turn.content for turn in request.history if turn.role == 'user'][-3:]
-    # Последний вопрос консультанта объясняет короткие ответы «четвёртая»
-    # и «за два года». Он помогает найти тему, но не подтверждает факты о продукте.
-    prompt = request.history[-1].content[-800:] if request.history and request.history[-1].role == 'assistant' else ''
+    """Поисковые синонимы добавляются после разрешения пользовательского намерения."""
+    query = search_intent(request).query
     # Разговорное «проверите учёт» в материалах может называться аудитом.
     terms = ''
-    if re.search(r'провер\w*.{0,28}уч[её]т|уч[её]т.{0,28}провер', request.message, re.I):
+    if re.search(r'провер\w*.{0,28}уч[её]т|уч[её]т.{0,28}провер', query, re.I):
         terms = ' аудит существующей системы учёта модернизация приборов'
     # Поисковые синонимы связывают язык клиента с формулировкой документа.
     # Тексты ответа и источников остаются исходными.
-    if re.search(r'фасад|на стен[еуы]', request.message, re.I):
+    if re.search(r'фасад|на стен[еуы]', query, re.I):
         terms += ' монтаж на вертикальные поверхности зданий'
-    if re.search(r'архив|суточн', request.message, re.I):
+    if re.search(r'архив|суточн', query, re.I):
         terms += ' глубина архива разбивка день ночь идентификатор канала'
-    return (request.message + '\n') * 3 + '\n'.join(previous)[-6000:] + '\n' + prompt + terms
+    return query + terms
+
+
+def data_checklist_question(text: str) -> bool:
+    """Просьбу перечислить исходные данные отличаем от индивидуального расчёта."""
+    return bool(re.search(
+        r'понадоб|потребу(?:ет|ют)ся|с чего(?:\s+\w+){0,2}\s+нач|'
+        r'каки\w*(?:\s+\w+){0,3}\s+(?:данн|сведен|параметр)|'
+        r'что(?:\s+\w+){0,4}\s+(?:предостав|подготов|узна|уточн|сообщ|собра|расч[её]т)', text, re.I))
 
 
 def load_profile_question(text: str) -> bool:

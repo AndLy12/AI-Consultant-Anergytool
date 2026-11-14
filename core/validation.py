@@ -4,6 +4,7 @@ from typing import Annotated, Literal
 import re
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 from core_contract import CoreResponse, CoreUnavailable, ModelResponseError, Source
+from core.dialogue import summary_excerpts, data_checklist_question
 
 
 # Запрос на черновик распознаём по явному действию. Слово «итоговая»
@@ -120,10 +121,11 @@ def assemble(raw, chunks, request, *, demo=False, truncated=False, secret='') ->
     summary_requested = bool(SUMMARY_REQUEST.search(request.message)
                              and not SUMMARY_DECLINED.search(request.message))
     user_texts = [request.message] + [turn.content for turn in request.history if turn.role == 'user']
+    summary_texts = summary_excerpts(user_texts[1:] + user_texts[:1]) if summary_requested else user_texts
     if isinstance(raw, dict) and raw.get('summary_draft') is not None:
         draft = raw['summary_draft']
         verified = (isinstance(draft, str) and bool(draft.strip()) and len(draft) <= 3000
-                    and all(not line.strip() or any(line.strip() in text for text in user_texts)
+                    and all(not line.strip() or any(line.strip() in text for text in summary_texts)
                             for line in draft.splitlines()))
         if not summary_requested or not verified:
             # Неподтверждённый или незапрошенный черновик не стирает ответ.
@@ -168,8 +170,13 @@ def assemble(raw, chunks, request, *, demo=False, truncated=False, secret='') ->
                   else 'В материалах базы найдено:\n\n' + '\n\n'.join(lines))
         had_question = answer.rstrip().endswith('?')
         photo_docs = {s.document_id for s in sources if 'распознавание показаний' in s.title.lower()}
-        if photo_docs and re.search(r'\bпоказан', answer, re.I) and not re.search(r'верификац', answer, re.I):
+        commercial_verification = re.search(
+            r'(?:коммерческ\w*\s+уч[её]т|начислен\w*)[^.!?\n]{0,180}'
+            r'после\s+(?:обязательн\w*\s+)?верификац|'
+            r'после\s+верификац[^.!?\n]{0,180}(?:коммерческ\w*\s+уч[её]т|начислен)', answer, re.I)
+        if photo_docs and re.search(r'\bпоказан', answer, re.I) and not commercial_verification:
             # Ограничение коммерческого использования обязательно для показаний.
+            # Проверка серийного номера не заменяет условие коммерческого учёта.
             # Добавляем только точный фрагмент того же продукта из текущего
             # контекста; собственный текст или другой документ не подставляем.
             condition = next((c for c in chunks if c.document_id in photo_docs
@@ -186,6 +193,7 @@ def assemble(raw, chunks, request, *, demo=False, truncated=False, secret='') ->
                         title=condition.title, excerpt=condition.text, section=condition.section, page=condition.page))
                     seen.add(condition.chunk_id)
         if (selected.question and not had_question
+                and not data_checklist_question(request.message)
                 and not EMBEDDED_QUESTION.search(answer) and selected.question.strip() not in answer):
             answer += '\n\n' + selected.question.strip()
         def hide_aliases(match):
@@ -217,11 +225,14 @@ def assemble(raw, chunks, request, *, demo=False, truncated=False, secret='') ->
         action = 'clarify'
     summary = selected.summary_draft
     if summary_requested and summary is None:
-        # Собираем целые реплики, не добавляя контактов и не обрезая фразу.
-        # При длинном диалоге этот запасной черновик включает последние
-        # помещающиеся сообщения и остаётся предметом проверки пользователя.
+        # Собираем исходные выдержки без выдуманных контактов. Явные поправки
+        # простых параметров уже разрешены в summary_excerpts; сложные случаи
+        # сохраняют хронологию и требуют проверки пользователем. Длинные
+        # выдержки пропускаем целиком, не обрезая фразу в середине.
         parts, size = [], 0
-        for text in reversed(user_texts[1:] or user_texts[:1]):
+        candidates = [text for text in summary_texts if not (
+            request.history and SUMMARY_REQUEST.search(text))]
+        for text in reversed(candidates):
             if size + len(text) + 1 <= 3000:
                 parts.append(text)
                 size += len(text) + 1

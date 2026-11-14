@@ -6,7 +6,8 @@ import re
 from rank_bm25 import BM25Plus
 
 from core.documents import Chunk
-from core.dialogue import search_query, load_profile_question
+from core.dialogue import (search_query, search_intent, load_profile_question,
+                          data_checklist_question, PREPARATION_SECTIONS)
 
 TOKEN = re.compile(r'[a-zа-яё0-9]+', re.IGNORECASE)
 STOP = {'и', 'в', 'во', 'на', 'с', 'со', 'к', 'ко', 'о', 'об', 'по', 'из', 'для',
@@ -128,114 +129,86 @@ class SearchIndex:
         candidates.sort(key=lambda item: (-item.score, item.chunk.chunk_id))
         return tuple(candidates[:top_k])
 
+    @staticmethod
+    def allowed(chunk, intent):
+        """Отказ исключает документ продукта и его список подготовки, но не чужие условия."""
+        return not any(title in chunk.title.lower() or (
+            PREPARATION_SECTIONS.get(title) == (chunk.section or '').lower())
+            for title in intent.excluded)
+
     def search_request(self, request, top_k=5):
         """Сохраняем общий поиск, выделяя место продукту, названному в диалоге.
 
         Явная смена продукта в последней реплике важнее ранней темы. Подсказки
         относятся к словам каталога, а не к ID вопросов или готовым ответам.
         """
+        intent = search_intent(request)
         query = search_query(request)
-        ranked = self.search(query, len(self.sections))
+        ranked = tuple(h for h in self.search(query, len(self.sections)) if self.allowed(h.chunk, intent))
         hits = ranked[:top_k]
         checklist_found = False
-        topics = (
-            (r'автоматическ\w* уч[её]т|автоматизи\w* сбор|аскуэ|по цехам|по арендатор|облачн\w* платформ|платформ\w* уч[её]т|sim|сим-карт|симки', 'облачная платформа'),
-            (r'\bфото\b|фотограф|снимк|распознаван', 'распознавание показаний'),
-            (r'солнечн|фотоэлектр|панел|крыш|кровл|скат|фасад', 'солнечные электростанции'),
-            (r'ценов\w* категори', 'ценовые категории'),
-            (r'оптов\w* рын|орэм', 'выход на оптовый рынок'),
-            (r'коммерческ\w* потер|находить потери|хищени', 'поиск коммерческих потерь'),
-        )
-        planning = re.search(
-            r'понадоб|с чего(?:\s+\w+){0,2}\s+нач|'
-            r'каки\w*(?:\s+\w+){0,3}\s+(?:данн|сведен|параметр)|'
-            r'что(?:\s+\w+){0,4}\s+(?:предостав|подготов|узна|уточн|сообщ|собра)',
-            request.message, re.I)
-        turns = [request.message]
-        if re.search(r'верн\w*[^.!?\n]{0,50}к\s+перв\w*\s+(?:вопрос|тем)', request.message, re.I):
-            # Явная ссылка на первый вопрос важнее последней промежуточной темы.
-            # Берём первую названную пользователем тему, пропуская приветствия.
-            first_topic = next((h.content for h in request.history if h.role == 'user'
-                                and any(re.search(pattern, h.content, re.I) for pattern, _ in topics)), None)
-            if first_topic:
-                turns.append(first_topic)
-        turns.extend(h.content for h in reversed(request.history))
-        for turn in turns:
-            titles = [title for pattern, title in topics if re.search(pattern, turn, re.I)]
-            if planning and titles and set(titles) <= {'облачная платформа', 'распознавание показаний'}:
-                # При подготовке смешанного учёта фото — способ получения данных,
-                # а не обязательно смена задачи подключения платформы. Сохраняем
-                # оба продукта, только если сам пользователь обсуждал оба способа.
-                user_text = request.message + '\n' + '\n'.join(
-                    h.content for h in request.history if h.role == 'user')
-                linked = [title for pattern, title in topics[:2] if re.search(pattern, user_text, re.I)]
-                if titles and len(linked) == 2 and set(titles) <= set(linked):
-                    titles = linked
-            if titles:
-                # Сначала ранжируем по самому вопросу, затем выбираем лучшие
-                # разделы нужного документа. Остальные места доступны общему поиску.
-                product = [h for h in ranked if any(t in h.chunk.title.lower() for t in titles)]
-                if product:
-                    # При двух способах сбора данных оставляем место обоим продуктам.
-                    primary = []
-                    for title in titles:
-                        match = next((h for h in product if title in h.chunk.title.lower()), None)
-                        if match:
-                            primary.append(match)
-                    primary.extend(h for h in product[:2] if h not in primary)
-                    primary = primary[:min(2, top_k)]
-                    # Запрос о составе данных относится также к разделу подготовки
-                    # расчёта. Заголовок связывает продукт с инструкцией другого документа.
-                    if planning:
-                        sections = {'облачная платформа': 'для платформы учёта',
-                                    'солнечные электростанции': 'для солнечной станции',
-                                    'распознавание показаний': 'для распознавания показаний',
-                                    'поиск коммерческих потерь': 'для поиска коммерческих потерь',
-                                    'выход на оптовый рынок': 'для анализа затрат и выхода на оптовый рынок'}
-                        headings = {sections[t] for t in titles if t in sections}
-                        guidance = [h for h in ranked if (h.chunk.section or '').lower() in headings]
-                        if guidance:
-                            # При уже выбранном продукте конкретный список данных
-                            # важнее общей инструкции начать знакомство с клиентом.
-                            # Для смешанного сбора сохраняем оба списка подготовки.
-                            primary = [Hit(h.chunk, h.score, True) for h in guidance] + [
-                                h for h in primary if h not in guidance]
-                            checklist_found = True
-                    if ('солнечные электростанции' in titles
-                            and load_profile_question(request.message)):
-                        # Дневная выработка и вечерняя нагрузка сформулированы
-                        # разными словами. Выносим исходную оговорку о несовпадении
-                        # профилей вперёд, не делая вывода за пользователя.
-                        mismatch = next((h for h in product if re.search(
-                            r'выработк\w*\s+не\s+совпад', h.chunk.text, re.I)), None)
-                        if mismatch:
-                            primary = [Hit(mismatch.chunk, mismatch.score, True)] + [
-                                h for h in primary if h.chunk.chunk_id != mismatch.chunk.chunk_id]
-                    if 'ценовые категории' in titles:
-                        # У короткого абзаца отдельной категории меньше общих слов,
-                        # чем у обзорного раздела. Явно названная категория имеет
-                        # приоритет; цифры и условия берём из исходного текста.
-                        category = None
-                        for text in [request.message] + [h.content for h in reversed(request.history) if h.role == 'user']:
-                            category = price_category(text)
-                            if category:
-                                break
-                        for chunk in self.chunks if category else ():
-                            heading = re.match(r'^[\s*]*(\w+):', chunk.text)
-                            if ('ценовые категории' in chunk.title.lower() and heading
-                                    and tokens(heading[1]) == [category]):
-                                primary = [Hit(chunk, 0.0, True)] + [
-                                    h for h in primary if h.chunk.chunk_id != chunk.chunk_id]
-                                break
-                    ids = {h.chunk.chunk_id for h in primary}
-                    remaining = [h for h in hits if h.chunk.chunk_id not in ids and not (
-                        checklist_found and h.chunk.title.lower() in {
-                            'общие вопросы', 'обзор продуктов: что подходит под вашу задачу'})]
-                    return tuple((primary + remaining)[:top_k])
-                break
+        planning = data_checklist_question(request.message)
+        titles = intent.active
+        if titles:
+            # Сначала ранжируем по самому вопросу, затем выбираем лучшие
+            # разделы нужного документа. Остальные места доступны общему поиску.
+            product = [h for h in ranked if any(t in h.chunk.title.lower() for t in titles)]
+            if product:
+                # При двух способах сбора данных оставляем место обоим продуктам.
+                primary = []
+                for title in titles:
+                    match = next((h for h in product if title in h.chunk.title.lower()), None)
+                    if match:
+                        primary.append(match)
+                primary.extend(h for h in product[:2] if h not in primary)
+                primary = primary[:min(max(2, len(titles)), top_k)]
+                # Запрос о составе данных относится также к разделу подготовки
+                # расчёта. Заголовок связывает продукт с инструкцией другого документа.
+                if planning:
+                    sections = PREPARATION_SECTIONS
+                    headings = {sections[t] for t in titles if t in sections}
+                    guidance = [h for h in ranked if (h.chunk.section or '').lower() in headings]
+                    if guidance:
+                        # При уже выбранном продукте конкретный список данных
+                        # важнее общей инструкции начать знакомство с клиентом.
+                        # Для смешанного сбора сохраняем оба списка подготовки.
+                        primary = [Hit(h.chunk, h.score, True) for h in guidance] + [
+                            h for h in primary if h not in guidance]
+                        checklist_found = True
+                if ('солнечные электростанции' in titles
+                        and load_profile_question(request.message)):
+                    # Дневная выработка и вечерняя нагрузка сформулированы
+                    # разными словами. Выносим исходную оговорку о несовпадении
+                    # профилей вперёд, не делая вывода за пользователя.
+                    mismatch = next((h for h in product if re.search(
+                        r'выработк\w*\s+не\s+совпад', h.chunk.text, re.I)), None)
+                    if mismatch:
+                        primary = [Hit(mismatch.chunk, mismatch.score, True)] + [
+                            h for h in primary if h.chunk.chunk_id != mismatch.chunk.chunk_id]
+                if 'ценовые категории' in titles:
+                    # У короткого абзаца отдельной категории меньше общих слов,
+                    # чем у обзорного раздела. Явно названная категория имеет
+                    # приоритет; цифры и условия берём из исходного текста.
+                    category = None
+                    for text in [request.message] + [h.content for h in reversed(request.history) if h.role == 'user']:
+                        category = price_category(text)
+                        if category:
+                            break
+                    for chunk in self.chunks if category else ():
+                        heading = re.match(r'^[\s*]*(\w+):', chunk.text)
+                        if ('ценовые категории' in chunk.title.lower() and heading
+                                and tokens(heading[1]) == [category]):
+                            primary = [Hit(chunk, 0.0, True)] + [
+                                h for h in primary if h.chunk.chunk_id != chunk.chunk_id]
+                            break
+                ids = {h.chunk.chunk_id for h in primary}
+                remaining = [h for h in hits if h.chunk.chunk_id not in ids and not (
+                    checklist_found and h.chunk.title.lower() in {
+                        'общие вопросы', 'обзор продуктов: что подходит под вашу задачу'})]
+                return tuple((primary + remaining)[:top_k])
         return hits
 
-    def rerank_candidates(self, hits, budget=48000, limit=96):
+    def rerank_candidates(self, hits, budget=48000, limit=96, *, request=None):
         """Добавляем абзацы двух ведущих документов для семантического поиска.
 
         Табличная строка или короткая оговорка может не содержать ни одного
@@ -245,7 +218,9 @@ class SearchIndex:
         seen = {h.chunk.chunk_id for h in hits}
         used = sum(len(h.chunk.text) for h in hits)
         documents = list(dict.fromkeys(h.chunk.document_id for h in hits))[:2]
-        groups = [[c for c in self.chunks if c.document_id == doc] for doc in documents]
+        intent = search_intent(request) if request is not None else None
+        groups = [[c for c in self.chunks if c.document_id == doc
+                   and (intent is None or self.allowed(c, intent))] for doc in documents]
         for i in range(max(map(len, groups), default=0)):
             for group in groups:
                 if len(candidates) >= limit:
@@ -258,19 +233,21 @@ class SearchIndex:
                         used += len(chunk.text)
         return tuple(candidates)
 
-    def context(self, hits: tuple[Hit, ...], budget: int) -> tuple[Chunk, ...]:
+    def context(self, hits: tuple[Hit, ...], budget: int, *, request=None) -> tuple[Chunk, ...]:
         """Дополняем находки целыми разделами и ограничениями тех же документов.
 
         Одного соседнего абзаца недостаточно для таблицы или оговорки в другом
         подразделе. Дополнения берём целиком, без обрезки условия посередине.
         Бюджет остаётся жёстким: полноту всех условий при малом бюджете не обещаем.
         """
+        intent = search_intent(request) if request is not None else None
         chosen = []
         seen = set()
         used = 0
         def add(group):
             nonlocal used
-            fresh = [c for c in group if c.chunk_id not in seen]
+            fresh = [c for c in group if c.chunk_id not in seen
+                     and (intent is None or self.allowed(c, intent))]
             size = sum(len(c.text) for c in fresh)
             if used + size <= budget:
                 chosen.extend(fresh)

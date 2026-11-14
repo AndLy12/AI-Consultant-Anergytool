@@ -424,7 +424,8 @@ def test_reading_answer_keeps_verified_commercial_use_condition(existing):
     """Пропущенное условие добавляется из контекста с источником, существующее не повторяется."""
     condition = 'Распознанное показание является дополнительным подтверждением. В коммерческий учёт оно попадает только после верификации.'
     chunks = make_chunks('photo.md', [('# Распознавание показаний\n\nПоказания считываются раздельно.\n\n' + condition, None, None)], 1800)
-    answer = 'Да, показания считываются раздельно.' + (' После верификации.' if existing else '')
+    answer = 'Да, показания считываются раздельно.' + (
+        ' В коммерческий учёт они попадают только после верификации.' if existing else '')
     result = assemble({'status': 'answered', 'answer': answer, 'evidence': ['D1'],
                        'question': 'Сколько приборов нужно подключить?'}, chunks, CoreRequest(message='Оба показания?'))
     assert result.answer.lower().count('верификац') == 1
