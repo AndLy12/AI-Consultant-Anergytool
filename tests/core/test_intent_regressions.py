@@ -142,3 +142,17 @@ def test_reactive_energy_question_is_not_forced_to_cloud_platform(index):
 def test_water_reading_verb_selects_recognition_instead_of_electricity_platform(index):
     hits = index.search_request(CoreRequest(message='У нас учёт воды. Как распознавать показания?'), 1)
     assert hits[0].chunk.title == 'Распознавание показаний'
+
+
+def test_nested_preparation_does_not_expand_to_other_products(index):
+    chunks = make_chunks('nested-prep.md', [('# Подготовка\n\n## Какие сведения могут понадобиться\n\n'
+        'Состав зависит от продукта.\n\n### Для первичного понимания задачи\n\nРегион и мощность.\n\n'
+        '### Для платформы учёта\n\nКоличество и тип приборов.\n\n'
+        '### Для солнечной станции\n\nПлощадь кровли.', None, None)], 1800)
+    current = SearchIndex((*index.chunks, *chunks))
+    request = CoreRequest(message='Нужен учёт по арендаторам. Что понадобится?')
+    hits = current.search_request(request, 5)
+    context = current.context(hits, 14000)
+    assert any(c.text == 'Количество и тип приборов.' for c in context)
+    assert all(c.text != 'Площадь кровли.' and c.text != 'Регион и мощность.' for c in context)
+    assert all('Солнечные' not in h.chunk.title for h in hits)

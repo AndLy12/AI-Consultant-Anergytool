@@ -6,7 +6,7 @@ import re
 from rank_bm25 import BM25Plus
 
 from core.documents import Chunk
-from core.dialogue import (search_query, search_intent, load_profile_question,
+from core.dialogue import (TOPICS, search_query, search_intent, load_profile_question,
                           data_checklist_question, data_sufficiency_question, PREPARATION_SECTIONS)
 
 TOKEN = re.compile(r'[a-zа-яё0-9]+', re.IGNORECASE)
@@ -81,6 +81,18 @@ class SearchIndex:
     Индексы разделов и абзацев строятся один раз и только читаются при поиске.
     Число и вес совпадений не являются вероятностью правильности ответа.
     """
+    @staticmethod
+    def group_key(chunk):
+        """Список конкретного продукта не расширяем до общего раздела всех продуктов.
+
+        Вложенные заголовки подготовки лежат под общим H2. Усечение до первых
+        двух уровней смешивало их, даже если поиск выбрал правильный список.
+        """
+        path = chunk.section_path or (chunk.section,)
+        end = next((i + 1 for i, heading in enumerate(path)
+                    if (heading or '').lower() in PREPARATION_SECTIONS.values()), 2)
+        return chunk.document_id, path[:end]
+
     def __init__(self, chunks: tuple[Chunk, ...]):
         # Проверяем и готовые фрагменты вызывающей стороны: заголовок не должен
         # превращать пустой разделитель в результат поиска.
@@ -90,7 +102,7 @@ class SearchIndex:
         sections = defaultdict(list)
         for chunk in self.chunks:
             path = chunk.section_path or (chunk.section,)
-            group = (chunk.document_id, path[:2])
+            group = self.group_key(chunk)
             self.groups[group].append(chunk)
             sections[(chunk.document_id, path)].append(chunk)
         for (document_id, path), group in self.groups.items():
@@ -131,10 +143,13 @@ class SearchIndex:
 
     @staticmethod
     def allowed(chunk, intent):
-        """Отказ исключает документ продукта и его список подготовки, но не чужие условия."""
-        return not any(title in chunk.title.lower() or (
-            PREPARATION_SECTIONS.get(title) == (chunk.section or '').lower())
-            for title in intent.excluded)
+        """Сохраняем выбранные продукты и общие основания, отсекая чужие продуктовые разделы."""
+        linked = {title for _, title in TOPICS if title in chunk.title.lower()}
+        path = chunk.section_path or (chunk.section,)
+        linked.update(title for title, heading in PREPARATION_SECTIONS.items()
+                      if any((part or '').lower() == heading for part in path))
+        return not linked.intersection(intent.excluded) and (
+            not intent.active or not linked or bool(linked.intersection(intent.active)))
 
     def search_request(self, request, top_k=5):
         """Сохраняем общий поиск, выделяя место продукту, названному в диалоге.
@@ -276,8 +291,7 @@ class SearchIndex:
         groups = []
         documents = []
         for hit in hits:
-            path = hit.chunk.section_path or (hit.chunk.section,)
-            key = (hit.chunk.document_id, path[:2])
+            key = self.group_key(hit.chunk)
             if key not in groups:
                 groups.append(key)
             if hit.chunk.document_id not in documents:
