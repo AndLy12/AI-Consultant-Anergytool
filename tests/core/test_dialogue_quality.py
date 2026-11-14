@@ -83,6 +83,24 @@ def test_parameter_request_with_possessive_is_not_duplicated():
     assert result.answer == answer
 
 
+@pytest.mark.parametrize('new', [
+    'мощность 900 кВт, а не 600 кВт',
+    'мощность не менее 900 кВт',
+    'мощность от 900 до 1000 кВт',
+])
+def test_corrected_summary_keeps_bounds_and_drops_rejected_value(new):
+    request = CoreRequest(message='Подготовь резюме.', history=[
+        {'role': 'user', 'content': 'Мощность 600 кВт.'},
+        {'role': 'user', 'content': f'Исправляю: {new}.'},
+    ])
+    result = assemble({'status': 'insufficient_data'}, (), request)
+    assert '600' not in result.summary_draft
+    if 'не менее' in new:
+        assert 'не менее 900 кВт' in result.summary_draft
+    if 'до' in new:
+        assert 'от 900 до 1000 кВт' in result.summary_draft
+
+
 def test_review_transport_error_preserves_answer_and_reports_timing(tmp_path, caplog):
     chunks = make_chunks('training.md', [('Учебный учёт доступен.', None, None)], 1800)
     class Client:

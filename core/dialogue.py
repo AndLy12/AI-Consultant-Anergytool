@@ -188,10 +188,14 @@ def summary_excerpts(texts: list[str]) -> list[str]:
     Каждый результат — исходная выдержка; разные объекты и неопределённые ссылки
     не сводим к одному значению. Это не замена смысловой проверке резюме моделью.
     """
-    correction = re.compile(r'исправля\w*|поправ\w*|уточняю|ошибся|ошиблась', re.I)
+    correction = re.compile(
+        r'исправля\w*|поправ\w*|уточняю|ошибся|ошиблась|'
+        r'\bне\s+(?!только\b)[^.!?\n]{1,40}\s+а\s+', re.I)
     if not any(correction.search(text) for text in texts):
         return texts
-    quantity = r'\d+(?:[.,]\d+)?\s*(?:(?:тыс(?:яч\w*)?\.?|млн|миллион\w*)\s*)?'
+    value = r'\d+(?:[ \u00a0]\d{3})*(?:[.,]\d+)?\s*(?:(?:тыс(?:яч\w*)?\.?|млн|миллион\w*)\s*)?'
+    quantity = (r'(?:(?:не\s+(?:менее|более|ниже|выше)|от|до|около|примерно)\s+)?' + value
+                + r'(?:\s*(?:[-–—]|до)\s*' + value + r')?')
     patterns = (
         ('consumption', re.compile(r'(?:потреблен\w*\s*[:—-]?\s*)?' + quantity +
             r'(?:[км]вт\s*[·⋅*-]?\s*ч|киловатт[- ]?час\w*|мегаватт[- ]?час\w*)'
@@ -215,6 +219,7 @@ def summary_excerpts(texts: list[str]) -> list[str]:
         # написании единицы словами. Более длинный показатель имеет приоритет.
         facts = [fact for fact in facts if fact[0] != 'power' or not any(
             other[0] == 'consumption' and other[2] <= fact[2] < other[3] for other in facts)]
+        facts = [fact for fact in facts if not re.search(r'\b(?:не|вместо)\s+$', text[:fact[2]], re.I)]
         if correction.search(text):
             replaced = {slot for slot, _, _, _ in facts}
             records = [(slot, quote) for slot, quote in records if slot not in replaced]
@@ -229,6 +234,9 @@ def summary_excerpts(texts: list[str]) -> list[str]:
             clause = text[start:end]
             clause = clause.strip()
             if not clause:
+                continue
+            if correction.search(text) and re.match(
+                    r'^(?:а\s+)?не\s+(?!менее\b|более\b|ниже\b|выше\b|меньше\b|больше\b)', clause, re.I):
                 continue
             present = [(slot, quote) for slot, quote, _, _ in facts if quote in clause]
             records.extend(present or [(None, clause)])
