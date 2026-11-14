@@ -1,12 +1,14 @@
 """Проверки актуального черновика и устойчивости необязательного прохода модели."""
 
 import logging
+import json
 
 import pytest
 
 from core.config import Settings
 from core.documents import make_chunks
 from core.engine import EnergytoolCore
+from core.prompts import build_messages, build_review_messages
 from core.validation import assemble
 from core_contract import CoreRequest, CoreUnavailable
 
@@ -135,3 +137,13 @@ def test_optional_reranker_failure_is_visible_without_losing_answer(tmp_path):
     result = EnergytoolCore(cfg, chunks=chunks, client=Client()).respond(CoreRequest(message='Учёт?'))
     assert result.answer == 'Учёт доступен.'
     assert result.warnings == ['Дополнительное ранжирование не завершено; использован локальный поиск.']
+
+
+def test_product_checklist_requirement_reaches_both_model_passes():
+    chunks = make_chunks('prep.md', [('# Подготовка\n\n## Для платформы учёта\n\n'
+                                     'Количество и тип приборов; схема сбора данных.', None, None)], 1800)
+    request = CoreRequest(message='Что понадобится для учёта?')
+    messages = build_messages(request, [], chunks)
+    assert json.loads(messages[-1]['content'])['required_checklists'] == ['D1']
+    checked = build_review_messages(messages, {'status': 'insufficient_data'})
+    assert json.loads(checked[-1]['content'])['required_checklists'] == ['D1']

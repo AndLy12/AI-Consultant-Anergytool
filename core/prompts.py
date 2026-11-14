@@ -2,7 +2,8 @@
 
 import json
 import re
-from core.dialogue import load_profile_question, data_checklist_question
+from core.dialogue import (load_profile_question, data_checklist_question,
+                          data_sufficiency_question, PREPARATION_SECTIONS)
 
 PROMPT_VERSION = 'energytool-consultation-intent-1'
 SYSTEM_PROMPT = """Ты консультант МТС Energytool. Ответь по-русски на current_message с учётом history.
@@ -61,6 +62,11 @@ def build_messages(request, history, chunks, secret=''):
         'documents': [{'chunk_id': f'D{i}', 'title': c.title, 'section': c.section,
                        'text': c.text} for i, c in enumerate(chunks, 1)],
     }
+    if data_checklist_question(request.message) or data_sufficiency_question(request.message):
+        # Обязательность списка не должна теряться между поиском и моделью:
+        # одно место в начале контекста не мешало выбирать общую справку вместо него.
+        content['required_checklists'] = [f'D{i}' for i, chunk in enumerate(chunks, 1)
+                                           if (chunk.section or '').lower() in PREPARATION_SECTIONS.values()]
     data = json.dumps(content, ensure_ascii=False)
     # Даже случайно вставленный в документ или сообщение действующий ключ не передаём модели.
     if secret:
@@ -71,6 +77,13 @@ def build_messages(request, history, chunks, secret=''):
             '\nТекущий запрос — перечень данных или первый шаг. Дай конкретный список '
             'для выбранного продукта, отделив уже известное. Не добавляй следующий '
             'вопрос после списка и не собирай параметры другого продукта.')
+    if content.get('required_checklists'):
+        instruction += (
+            '\nВ required_checklists указаны ID списков подготовки выбранных продуктов. '
+            'Учти каждый пункт этих списков: известное отметь как уже сообщённое, '
+            'остальное перечисли как недостающие данные. Общая справка о регионе, '
+            'мощности или потреблении не заменяет продуктовый список. '
+            'При проверке достаточности явно назови неизвестные обязательные условия.')
     if (chunks and load_profile_question(request.message)
             and re.search(r'выработк\w*\s+не\s+совпад', chunks[0].text, re.I)):
         # Фокус следует из запроса и найденного ограничения. Иначе общая
@@ -136,5 +149,10 @@ def build_review_messages(messages, draft):
         'Пример: {"issues":["Убрано неподтверждённое обещание"],'
         '"follow_up_question":null,"result":{"status":"answered","answer":"Исправленный ответ","evidence":["D1"]}}.'
     )
+    if payload.get('required_checklists'):
+        instruction += (
+            ' Прежде чем принять result, сверь каждый пункт required_checklists '
+            'с ответом. Восстанови пропущенные пункты, отдели уже известные от '
+            'недостающих. Не заменяй продуктовые списки общими данными об объекте.')
     return [dict(messages[0], content=messages[0]['content'] + '\n' + instruction),
             {'role': 'user', 'content': json.dumps(payload, ensure_ascii=False)}]
