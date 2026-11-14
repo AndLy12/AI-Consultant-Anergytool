@@ -26,6 +26,20 @@ def questions(path, rows):
         writer.writerows(rows)
 
 
+@pytest.mark.parametrize('filename', ['questions.csv', 'train.csv'])
+def test_platform_inputs_in_working_directory(tmp_path, monkeypatch, filename):
+    """Пример организаторов допускает входы в cwd при отдельном DATA_DIR."""
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv('DATA_DIR', str(tmp_path / 'data'))
+    source = tmp_path / filename
+    questions(source, [('001', 'Вопрос')])
+    (tmp_path / 'kb.zip').write_bytes(b'')
+    settings = solution.Settings.from_environment()
+    assert settings.questions_path == source
+    assert solution.find_platform_input(settings.data_dir, 'knowledge-base.zip',
+                                        'knowledge_base.zip', 'kb.zip') == tmp_path / 'kb.zip'
+
+
 def test_mixed_independent_dialogues_csv_and_unicode(tmp_path):
     source = tmp_path / 'questions.csv'
     rows = [('001', 'Пользователь: Стенд Альфа\nАссистент: Уточните\nПользователь: Как экспортировать CSV?'),
@@ -84,6 +98,19 @@ def test_one_failure_does_not_lose_other_rows(tmp_path):
     report = json.loads(target.with_suffix('.report.json').read_text())
     assert report['technical_failures'] == 1
     assert 'Успешный тестовый ответ' in target.read_text(encoding='utf-8')
+
+
+def test_unfinished_review_is_reported_without_discarding_answer(tmp_path):
+    """Незавершённая проверка не равна техническому отказу самой консультации."""
+    source, target = tmp_path / 'questions.csv', tmp_path / 'submission.csv'
+    questions(source, [('a', 'Вопрос')])
+    class Core:
+        def respond(self, request, **options):
+            return CoreResponse(answer='Первоначальный ответ.', warnings=['Дополнительная проверка ответа не завершена.'])
+    solution.run(solution.Settings(tmp_path, source, target), Core())
+    report = json.loads(target.with_suffix('.report.json').read_text())
+    assert report['technical_failures'] == 0 and report['review_incomplete'] == 1
+    assert 'Первоначальный ответ.' in target.read_text(encoding='utf-8')
 
 
 def test_global_deadline_and_prefilled_ids(tmp_path):

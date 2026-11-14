@@ -11,7 +11,8 @@ import tempfile
 import time
 
 from consultant_core import create_core
-from core.config import Settings as CoreSettings
+from core_contract import CoreUnavailable, ModelResponseError
+from core.config import Settings as CoreSettings, first_env
 from core.dialogue import parse_question
 
 TECHNICAL_ANSWER = ('Не удалось завершить обработку из-за технического ограничения. '
@@ -25,6 +26,20 @@ class Question:
     text: str
 
 
+def find_platform_input(data_dir: Path, *names: str) -> Path:
+    """Повторяем поиск входов из примера организаторов, не сканируя чужие файлы.
+
+    При отсутствии файла возвращаем основной путь: вызывающий код сохраняет
+    обычную ошибку чтения, вместо автоматического перехода в demo-режим.
+    """
+    for directory in (data_dir, Path(__file__).resolve().parent / data_dir, Path.cwd()):
+        for name in names:
+            candidate = directory / name
+            if candidate.is_file():
+                return candidate
+    return data_dir / names[0]
+
+
 @dataclass(frozen=True)
 class Settings:
     """Общий лимит учитывает подготовку индекса, а не только генерацию."""
@@ -36,13 +51,14 @@ class Settings:
 
     @classmethod
     def from_environment(cls, questions=None, output=None):
-        data = Path(os.getenv('DATA_DIR', 'data')).expanduser().resolve()
-        question_path = Path(questions).expanduser().resolve() if questions else data / 'questions.csv'
-        if questions and 'DATA_DIR' not in os.environ:
+        data = Path(first_env('DATA_DIR') or 'data').expanduser().resolve()
+        question_path = (Path(questions).expanduser().resolve() if questions
+                         else find_platform_input(data, 'questions.csv', 'train.csv'))
+        if questions and not first_env('DATA_DIR'):
             data = question_path.parent
         try:
             seconds = float(os.getenv('SUBMISSION_TIMEOUT_SECONDS', '1140'))
-            workers = int(os.getenv('MAX_WORKERS', '4'))
+            workers = int(first_env('MAX_WORKERS') or '4')
             if not 0 < seconds <= 1140 or not 1 <= workers <= 16:
                 raise ValueError
         except ValueError:
@@ -121,16 +137,28 @@ def run(settings: Settings, core=None) -> int:
         raise ValueError('Нельзя записывать ответы поверх исходных вопросов')
     write_submission(output, [(q.id, answers[i]) for i, q in enumerate(questions)])
     failures = completed = 0
+    review_incomplete = 0
+    failure_counts = {'model_response': 0, 'core_unavailable': 0, 'unexpected': 0}
+    status_counts = {}
+    initialized = core is not None
     owned = core is None
     try:
         if core is None:
             config = replace(CoreSettings.from_environment(), data_dir=settings.data_dir)
+            # Явный CORE_KB_PATH и основной каталог базы сохраняют приоритет.
+            # Альтернативные имена нужны для раскладки из официального примера ZIP.
+            if config.kb_path is None and not (settings.data_dir / 'knowledge-base').exists():
+                config = replace(config, kb_path=find_platform_input(
+                    settings.data_dir, 'knowledge-base.zip', 'knowledge_base.zip', 'kb.zip'))
             core = create_core(config, deadline=deadline)
+            initialized = True
 
         def answer(question):
             if not question.text.strip():
-                return 'Пожалуйста, сформулируйте вопрос о задаче и продуктах Energytool.'
-            return core.respond(parse_question(question.text), deadline=deadline).answer
+                return 'Пожалуйста, сформулируйте вопрос о задаче и продуктах Energytool.', 'clarification_needed', False
+            response = core.respond(parse_question(question.text), deadline=deadline)
+            return (response.answer, response.core_status or 'unspecified',
+                    any(w.startswith('Дополнительная проверка') for w in response.warnings))
 
         pool = ThreadPoolExecutor(max_workers=settings.max_workers)
         pending, next_index = {}, 0
@@ -143,12 +171,19 @@ def run(settings: Settings, core=None) -> int:
                 for future in done:
                     index = pending.pop(future)
                     try:
-                        text = future.result()
+                        text, status, unchecked = future.result()
                         if not isinstance(text, str) or not text.strip() or len(text) > 10000:
                             raise ValueError
                         answers[index] = text
-                    except Exception:
+                        status_counts[status] = status_counts.get(status, 0) + 1
+                        review_incomplete += int(unchecked)
+                    except Exception as exc:
                         failures += 1
+                        category = ('model_response' if isinstance(exc, ModelResponseError)
+                                    else 'core_unavailable' if isinstance(exc, CoreUnavailable)
+                                    else 'unexpected')
+                        category = getattr(exc, 'category', category) if isinstance(exc, CoreUnavailable) else category
+                        failure_counts[category] = failure_counts.get(category, 0) + 1
                     completed += 1
                 if done:
                     write_submission(output, [(q.id, answers[i]) for i, q in enumerate(questions)])
@@ -162,8 +197,12 @@ def run(settings: Settings, core=None) -> int:
         if owned and core is not None:
             core.close()
         report = {'rows': len(questions), 'completed': completed, 'technical_failures': failures,
+                  'review_incomplete': review_incomplete,
+                  'initialized': initialized, 'failure_counts': failure_counts, 'answer_statuses': status_counts,
                   'unprocessed': len(questions) - completed, 'elapsed_seconds': round(time.monotonic() - started, 3)}
         output.with_suffix('.report.json').write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding='utf-8')
+        # Агрегаты доступны и в журнале контейнера; тексты запросов и ключи не выводим.
+        print(json.dumps({'event': 'submission_report', **report}), flush=True)
     validate_submission(settings.questions_path, output)
     return len(questions)
 

@@ -11,13 +11,18 @@ from core_contract import CoreUnavailable
 
 def first_env(*names: str) -> str:
     """Платформенные имена имеют тот же приоритет, что указан в инструкции."""
-    return next((os.environ[name].strip() for name in names if os.environ.get(name, '').strip()), '')
+    for name in names:
+        value = os.getenv(name, '').strip()
+        # В примере платформы имя переменной служит заглушкой для пустого поля.
+        if value and value != name:
+            return value
+    return ''
 
 
 def number(name: str, default: str, minimum: float, maximum: float, integer=False):
     """Ошибку конфигурации показываем по имени поля, не раскрывая его значение."""
     try:
-        value = int(os.getenv(name, default)) if integer else float(os.getenv(name, default))
+        value = int(first_env(name) or default) if integer else float(first_env(name) or default)
         if not math.isfinite(value) or not minimum <= value <= maximum:
             raise ValueError
         return value
@@ -40,10 +45,12 @@ class Settings:
     chunk_chars: int = 1800
     context_chars: int = 14000
     history_chars: int = 16000
-    request_seconds: float = 60
-    network_seconds: float = 15
+    request_seconds: float = 100
+    network_seconds: float = 85
     retries: int = 2
     max_workers: int = 4
+    reranker_model: str = ''
+    review_answers: bool = True
 
     @classmethod
     def from_environment(cls):
@@ -51,26 +58,31 @@ class Settings:
         mode = os.getenv('CORE_DEMO', 'false').lower()
         if mode not in {'true', 'false'}:
             raise CoreUnavailable('CORE_DEMO должен быть true или false')
-        data = Path(os.getenv('DATA_DIR', 'data')).expanduser().resolve()
+        review = os.getenv('CORE_REVIEW_ANSWERS', 'true').lower()
+        if review not in {'true', 'false'}:
+            raise CoreUnavailable('CORE_REVIEW_ANSWERS должен быть true или false')
+        data = Path(first_env('DATA_DIR') or 'data').expanduser().resolve()
         configured = os.getenv('CORE_KB_PATH', '').strip()
         kb = Path(configured).expanduser().resolve() if configured else None
         settings = cls(
             data_dir=data, kb_path=kb, demo=mode == 'true',
-            base_url=first_env('LLM_BASE_URL', 'OPENAI_BASE_URL'),
+            base_url=first_env('LLM_BASE_URL', 'OPENAI_BASE_URL', 'BASE_URL'),
             api_key=first_env('LLM_API_KEY', 'OPENAI_API_KEY'),
             model=first_env('LLM_MODEL', 'OPENAI_MODEL', 'GEN_MODEL'),
             temperature=number('TEMPERATURE', '0.1', 0, 2),
             max_tokens=number('MAX_TOKENS', '1200', 1, 16000, True),
-            top_k=number('TOP_K', '5', 1, 20, True),
+            top_k=number('TOP_K', '5', 1, 30, True),
             chunk_chars=number('CORE_CHUNK_CHARS', '1800', 300, 7000, True),
             context_chars=number('CORE_CONTEXT_CHARS', '14000', 2000, 60000, True),
             history_chars=number('CORE_HISTORY_CHARS', '16000', 1000, 60000, True),
-            request_seconds=number('CORE_TIMEOUT_SECONDS', '60', 1, 120),
-            network_seconds=number('LLM_TIMEOUT_SECONDS', '15', .1, 30),
+            request_seconds=number('CORE_TIMEOUT_SECONDS', '100', 1, 120),
+            network_seconds=number('LLM_TIMEOUT_SECONDS', '85', .1, 120),
             retries=number('LLM_MAX_RETRIES', '2', 0, 3, True),
             max_workers=number('MAX_WORKERS', '4', 1, 16, True),
+            reranker_model=first_env('RERANKER_MODEL'),
+            review_answers=review == 'true',
         )
-        if os.getenv('CHUNKER', 'sections') not in {'sections', 'common'}:
+        if (first_env('CHUNKER') or 'sections') not in {'sections', 'common'}:
             raise CoreUnavailable('Поддерживается CHUNKER=sections или common (смысловое разбиение)')
         if not settings.demo:
             settings.validate_provider()

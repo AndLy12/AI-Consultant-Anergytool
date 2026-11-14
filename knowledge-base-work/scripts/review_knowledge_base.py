@@ -132,7 +132,8 @@ def check_retrieval(core_root: Path, sources: Path, facts: list[dict], cases: li
         request = contract.CoreRequest(message=case['conversation'][-1]['content'], history=case['conversation'][:-1])
         history, _ = dialogue.bounded_history(request, settings.history_chars)
         bounded = contract.CoreRequest(message=request.message, history=history)
-        hits = index.search(dialogue.search_query(bounded), top_k)
+        hits = (index.search_request(bounded, top_k) if hasattr(index, "search_request")
+                else index.search(dialogue.search_query(bounded), top_k))
         context = index.context(hits, settings.context_chars)
         expected = case['expected_fact_ids']
         expected_docs = {source_ids[facts_by_id[key]['source_path']] for key in expected}

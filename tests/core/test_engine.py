@@ -26,7 +26,7 @@ from core_contract import CoreRequest, CoreUnavailable, Turn
 
 
 def config(tmp_path, **changes):
-    return replace(Settings(data_dir=tmp_path, demo=True), **changes)
+    return replace(Settings(data_dir=tmp_path, demo=True, review_answers=False), **changes)
 
 
 def provider_config(tmp_path, **changes):
@@ -175,10 +175,75 @@ def test_evidence_is_existing_exact_quote(tmp_path):
             assemble(broken, chunks, request)
 
 
+def test_consultation_answer_requires_verified_evidence(tmp_path):
+    """Связный ответ сохраняется вместе с источником; выдуманная цитата отклоняется."""
+    chunks = demo_chunks(1800)
+    raw = {'status': 'answered', 'answer': 'В учебном стенде доступен экспорт в CSV.',
+           'evidence': [{'chunk_id': chunks[0].chunk_id, 'quote': chunks[0].text}]}
+    result = assemble(raw, chunks, CoreRequest(message='Как выгрузить отчёт?'))
+    assert result.answer == raw['answer'] and result.sources
+    raw['evidence'][0]['quote'] = 'Несуществующее свойство'
+    with pytest.raises(CoreUnavailable):
+        assemble(raw, chunks, CoreRequest(message='Как выгрузить отчёт?'))
+
+
+@pytest.mark.parametrize('first', ['not-json', 'bad-evidence'])
+def test_model_correction_keeps_context_and_deadline(tmp_path, first):
+    """Одна коррекция лечит формат и цитаты, сохраняя документы и общий бюджет."""
+    calls = []
+    def handler(request):
+        messages = json.loads(request.content)['messages']
+        calls.append(messages)
+        doc = json.loads(messages[-1]['content'])['documents'][0]
+        raw = {'status': 'answered', 'answer': 'В учебном стенде доступен экспорт в CSV.',
+               'evidence': [{'chunk_id': doc['chunk_id'], 'quote': doc['text']}]}
+        body = payload(raw)
+        if len(calls) == 1:
+            if first == 'not-json':
+                body['choices'][0]['message']['content'] = 'Не JSON'
+            else:
+                raw['evidence'][0]['quote'] = 'Несуществующая цитата'
+                body = payload(raw)
+        return httpx.Response(200, json=body)
+    settings = provider_config(tmp_path)
+    core = EnergytoolCore(settings, chunks=demo_chunks(1800),
+                          client=QwenClient(settings, httpx.MockTransport(handler)))
+    result = core.respond(CoreRequest(message='Экспорт CSV'), deadline=time.monotonic() + 5)
+    assert len(calls) == 2 and result.answer.startswith('В учебном стенде')
+    assert calls[0][-1] == calls[1][-1]
+    assert 'не прошла проверку' in calls[1][0]['content']
+
+
+@pytest.mark.parametrize('wrapper', ['<think>Рассуждение</think>\n{}', '```JSON\r\n{}\r\n```'])
+def test_model_json_wrappers_are_supported(tmp_path, wrapper):
+    """Служебные обёртки удаляются до проверки схемы и оснований."""
+    body = payload({'status': 'insufficient_data'})
+    body['choices'][0]['message']['content'] = wrapper.format(json.dumps({'status': 'insufficient_data'}))
+    transport = httpx.MockTransport(lambda request: httpx.Response(200, json=body))
+    result = QwenClient(provider_config(tmp_path), transport).complete([], time.monotonic() + 5)
+    assert result == {'status': 'insufficient_data'}
+
+
+@pytest.mark.parametrize('status,expected_calls', [(200, 2), (401, 1)])
+def test_correction_stops_after_one_attempt(tmp_path, status, expected_calls):
+    """Повторно невалидный ответ и отказ доступа не запускают бесконечную генерацию."""
+    calls = []
+    def handler(request):
+        calls.append(request)
+        return httpx.Response(status, json={'choices': [{'message': {'content': 'Не JSON'}}]})
+    settings = provider_config(tmp_path, retries=0)
+    core = EnergytoolCore(settings, chunks=demo_chunks(1800),
+                          client=QwenClient(settings, httpx.MockTransport(handler)))
+    with pytest.raises(CoreUnavailable):
+        core.respond(CoreRequest(message='Экспорт CSV'))
+    assert len(calls) == expected_calls
+
+
 def test_summary_cannot_add_unprovided_contact(tmp_path):
     request = CoreRequest(message='Подготовь резюме: компания Альфа')
-    with pytest.raises(CoreUnavailable):
-        assemble({'status': 'insufficient_data', 'summary_draft': 'Телефон +70000000000'}, (), request)
+    result = assemble({'status': 'insufficient_data', 'summary_draft': 'Телефон +70000000000'}, (), request)
+    assert result.summary_draft == request.message
+    assert '+70000000000' not in result.model_dump_json()
 
 
 def test_history_parser_boundaries_and_no_system_promotion():
@@ -218,7 +283,7 @@ def test_shared_core_does_not_keep_session_data(tmp_path):
     assert not any('PRIVATE_SESSION' in str(value) for value in vars(core).values())
 
 
-def test_qwen_endpoint_headers_and_no_forced_json_mode(tmp_path):
+def test_qwen_endpoint_headers_and_json_mode(tmp_path):
     calls = []
     def handler(request):
         calls.append(request)
@@ -227,7 +292,39 @@ def test_qwen_endpoint_headers_and_no_forced_json_mode(tmp_path):
     assert client.complete([{'role': 'user', 'content': 'тест'}], time.monotonic() + 5)['status'] == 'insufficient_data'
     assert str(calls[0].url) == 'https://qwen.example/proxy/chat/completions'
     body = json.loads(calls[0].content)
-    assert body['model'] == 'test-qwen' and 'response_format' not in body
+    assert body['model'] == 'test-qwen' and body['response_format']['type'] == 'json_schema'
+
+
+@pytest.mark.parametrize('status', [200, 503])
+def test_optional_reranker_controls_first_source(tmp_path, status):
+    settings = provider_config(tmp_path, reranker_model='test-reranker', top_k=1)
+    chunks = demo_chunks(1800)
+    requests = []
+    expected = []
+    def handler(request):
+        body = json.loads(request.content)
+        requests.append(request.url.path)
+        if request.url.path.endswith('/rerank'):
+            docs = body['documents']
+            assert len(docs) > 1 and body['top_n'] == 1
+            expected.append(docs[-1 if status == 200 else 0])
+            return httpx.Response(status, json={'results': [{'index': len(docs)-1}]})
+        doc = json.loads(body['messages'][-1]['content'])['documents'][0]
+        assert expected[0].endswith(doc['text'])
+        return httpx.Response(200, json=payload({'status': 'answered',
+            'evidence': [{'chunk_id': doc['chunk_id'], 'quote': doc['text']}]}))
+    extra = make_chunks('second.md', [('Стенд выгружает отчёт CSV.', None, None)], 1800)
+    core = EnergytoolCore(settings, chunks=tuple(chunks) + tuple(extra),
+                          client=QwenClient(settings, httpx.MockTransport(handler)))
+    assert core.respond(CoreRequest(message='Экспорт отчёта CSV')).sources
+    assert requests == ['/proxy/rerank', '/proxy/chat/completions']
+
+
+def test_quote_can_wrap_without_changing_source_text():
+    chunks = make_chunks('guide.md', [('Тариф включает\nдва периода.', None, None)], 1800)
+    raw = {'status': 'answered', 'evidence': [
+        {'chunk_id': chunks[0].chunk_id, 'quote': 'Тариф включает два периода.'}]}
+    assert assemble(raw, chunks, CoreRequest(message='Тариф?')).sources[0].excerpt == chunks[0].text
 
 
 @pytest.mark.parametrize('status,retries', [(401, 1), (403, 1), (404, 1), (429, 2), (500, 2), (302, 1)])

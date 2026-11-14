@@ -62,4 +62,28 @@ def bounded_history(request: CoreRequest, budget: int) -> tuple[list[dict], bool
 def search_query(request: CoreRequest) -> str:
     """Короткая реплика вроде «а ограничения?» получает тему из последних user-реплик."""
     previous = [turn.content for turn in request.history if turn.role == 'user'][-3:]
-    return (request.message + '\n') * 3 + '\n'.join(previous)[-6000:]
+    # Последний вопрос консультанта объясняет короткие ответы «четвёртая»
+    # и «за два года». Он помогает найти тему, но не подтверждает факты о продукте.
+    prompt = request.history[-1].content[-800:] if request.history and request.history[-1].role == 'assistant' else ''
+    # Разговорное «проверите учёт» в материалах может называться аудитом.
+    terms = ''
+    if re.search(r'провер\w*.{0,28}уч[её]т|уч[её]т.{0,28}провер', request.message, re.I):
+        terms = ' аудит существующей системы учёта модернизация приборов'
+    # Поисковые синонимы связывают язык клиента с формулировкой документа.
+    # Тексты ответа и источников остаются исходными.
+    if re.search(r'фасад|на стен[еуы]', request.message, re.I):
+        terms += ' монтаж на вертикальные поверхности зданий'
+    if re.search(r'архив|суточн', request.message, re.I):
+        terms += ' глубина архива разбивка день ночь идентификатор канала'
+    return (request.message + '\n') * 3 + '\n'.join(previous)[-6000:] + '\n' + prompt + terms
+
+
+def load_profile_question(text: str) -> bool:
+    """Выделяем вопрос о времени нагрузки без потери второго явного запроса.
+
+    Если клиент также спрашивает цену, диапазон мощности или размещение,
+    сохраняем полный продуктовый контекст с соответствующими ограничениями.
+    """
+    return bool(re.search(r'вечер|ноч', text, re.I)) and not re.search(
+        r'типов|диапазон|мощност|стоим|цен|тариф|кровл|скат|фасад|площад|'
+        r'\b\d+\s*(?:квт|мвт|киловатт)', text, re.I)

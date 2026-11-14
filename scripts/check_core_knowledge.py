@@ -14,7 +14,7 @@ import time
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from core.config import Settings
-from core.dialogue import bounded_history, parse_question, search_query
+from core.dialogue import bounded_history, parse_question
 from core.documents import load_chunks
 from core.retrieval import SearchIndex
 from core_contract import CoreRequest
@@ -34,7 +34,7 @@ def check(data_dir: Path, questions: Path | None = None, *, top_k: int = 5) -> d
         request = parse_question(question.text)
         history, truncated = bounded_history(request, settings.history_chars)
         request = CoreRequest(message=request.message, history=history)
-        hits = index.search(search_query(request), settings.top_k)
+        hits = index.search_request(request, settings.top_k)
         context = index.context(hits, settings.context_chars)
         rows.append({
             'id': question.id, 'history_turns': len(history), 'history_truncated': truncated,

@@ -55,3 +55,19 @@ class ConsultantCore(Protocol):
 
 class CoreUnavailable(Exception):
     """Технический сбой ядра; сообщение исключения не должно содержать секретов."""
+
+
+class ProviderError(CoreUnavailable):
+    """Код для агрегированного отчёта без ключей и текста запросов."""
+
+    def __init__(self, category, message):
+        super().__init__(message)
+        self.category = category
+
+
+class ModelResponseError(CoreUnavailable):
+    """Ответ модели допускает одну коррекцию формата или выбора оснований."""
+
+    def __init__(self, message, category='model_response'):
+        super().__init__(message)
+        self.category = category
