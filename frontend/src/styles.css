@@ -284,43 +284,201 @@ h2 {
   letter-spacing: 0;
 }
 
+/* ---------- Вход и регистрация ----------
+ * По макету Figma, кадры 15:68, 15:189, 15:210, 15:227. Все числа — в tokens.css.
+ * Карточка 695 × 746 по центру экрана на градиенте; тени у карточки в макете нет.
+ */
+
 .auth {
   min-height: 100%;
   display: grid;
+  /* minmax(0, 1fr): колонка не шире экрана, иначе карточка 695 px
+   * растягивала бы её и на телефоне появлялась горизонтальная прокрутка. */
+  grid-template-columns: minmax(0, 1fr);
   place-items: center;
   padding: 24px 16px;
+  background: var(--gradient-auth);
 }
 
 .auth-card {
-  width: 100%;
-  max-width: 440px;
-  background: var(--surface);
-  border-radius: var(--radius);
-  box-shadow: var(--shadow);
-  padding: 28px;
-  display: grid;
-  gap: 16px;
+  position: relative;
+  width: var(--auth-card-width);
+  max-width: 100%;
+  min-height: var(--auth-card-height);
+  padding: var(--auth-pad-top-login) var(--auth-pad-x) var(--auth-pad-bottom-login);
+  background: var(--color-white);
+  border-radius: var(--radius-auth-card);
+  display: flex;
+  flex-direction: column;
 }
 
-/* Заголовок входа/регистрации в макете — MTS Wide Medium, интервал 84.82% (слои 15:122, 15:139).
- * Размер 32px и расположение приводятся к макету на этапе 2 вместе с разметкой экрана. */
+.auth-card-register {
+  padding-top: var(--auth-pad-top-register);
+  padding-bottom: var(--auth-pad-bottom-register);
+}
+
+/* Заголовок: MTS Wide Medium 31.663px, #1d2023, по центру (15:122, 15:139); интервал — см. --lh-title-auth. */
 .auth-title {
-  font-size: 22px;
+  margin: 0 0 var(--auth-title-gap-login);
+  font-family: var(--font-wide);
+  font-size: var(--fs-auth-title);
   font-weight: var(--weight-medium);
   line-height: var(--lh-title-auth);
+  color: var(--color-text);
+  text-align: center;
+  position: relative;
+  top: var(--auth-title-shift);
 }
 
-.auth-lead,
-.auth-note {
+.auth-card-register .auth-title {
+  margin-bottom: var(--auth-title-gap-register);
+}
+
+.auth-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--auth-gap);
+}
+
+/* Поле: 569 × 81, фон rgba(242,243,247,0.8) на белом = #f5f5f9, рамка #d7dbe3, радиус 22.956. */
+.auth-input {
+  width: 100%;
+  height: var(--height-field);
+  /* В Figma 19 px отсчитаны от внешнего края поля, а padding — внутри рамки. */
+  padding: 0 calc(var(--auth-field-pad-x) - var(--border-field));
+  border: var(--border-field) solid var(--color-field-border);
+  border-radius: var(--radius-field);
+  background: var(--color-field);
+  /* Решение владельца: введённый текст — шрифт и размер подсказки, цвет чёрный. */
+  font-family: var(--font-text);
+  font-size: var(--fs-auth);
+  font-weight: var(--weight-regular);
+  line-height: var(--lh-normal);
+  color: var(--color-black);
+}
+
+.auth-input::placeholder {
+  color: var(--color-text-muted);
+  opacity: 1;
+}
+
+.auth-password {
+  position: relative;
+}
+
+.auth-input-password {
+  padding-right: calc(var(--auth-eye-right) + var(--icon-size) + var(--auth-field-pad-x));
+}
+
+.auth-eye {
+  position: absolute;
+  top: 50%;
+  right: var(--auth-eye-right);
+  width: var(--icon-size);
+  height: var(--icon-size);
+  padding: 0;
+  border: 0;
+  background: none;
+  transform: translateY(-50%);
+  cursor: pointer;
+}
+
+.auth-eye img {
+  display: block;
+}
+
+/* «Не менее 10 символов»: 19 px под полем, кнопка — через 46 px от верха подсказки.
+ * Блок высотой 19 px + общий зазор 27 px дают ровно эти 46 px. */
+.auth-hint {
+  margin: calc(var(--auth-hint-offset) - var(--auth-gap)) 0 0;
+  height: calc(var(--auth-hint-to-button) - var(--auth-gap));
+  /* Текст подсказки выровнен по тексту в поле (15:244: x 453 = поле 434 + 19). */
+  padding-left: var(--auth-field-pad-x);
+  font-size: var(--fs-auth);
+  line-height: var(--lh-normal);
+  color: var(--color-text-muted);
+}
+
+/* Ошибка от сервера (неверный пароль, занятая почта). Нет в макете. */
+.auth-error {
   margin: 0;
-  color: var(--text-muted);
-  font-size: 14px;
+  font-size: var(--fs-button);
+  color: var(--color-error);
 }
 
-.auth-note code {
-  background: var(--surface-muted);
-  padding: 1px 5px;
-  border-radius: 5px;
+/* Кнопки: 569 × 81, MTS Wide Bold 18.998px, интервал 1.191, разрядка 1.8998px, прописные. */
+.auth-button {
+  width: 100%;
+  height: var(--height-field);
+  border: 0;
+  border-radius: var(--radius-field);
+  font-family: var(--font-wide);
+  font-size: var(--fs-auth);
+  font-weight: var(--weight-bold);
+  line-height: var(--lh-button);
+  letter-spacing: var(--ls-caps);
+  text-transform: uppercase;
+  cursor: pointer;
+}
+
+.auth-button-primary {
+  background: var(--color-red);
+  color: var(--color-white);
+}
+
+.auth-button-primary:hover:not(:disabled) {
+  background: var(--color-red-hover);
+}
+
+/* Серая: у «Далее» — неактивная; у второй кнопки — только вид, она нажимается. */
+.auth-button-primary:disabled,
+.auth-button-muted {
+  background: var(--color-disabled);
+  color: var(--color-disabled-text);
+}
+
+.auth-button-primary:disabled {
+  cursor: not-allowed;
+}
+
+/* «или» с линиями по бокам: линии 210.558 и 209.767 px, слово по центру (15:127). */
+.auth-divider {
+  display: grid;
+  grid-template-columns: var(--auth-divider-line-left) 1fr var(--auth-divider-line-right);
+  align-items: center;
+  margin: var(--auth-gap) 0;
+}
+
+.auth-divider-line {
+  height: 0;
+  border-top: var(--border-divider) solid var(--color-line-light);
+}
+
+.auth-divider-text {
+  font-family: var(--font-text);
+  font-size: var(--fs-divider);
+  font-weight: var(--weight-medium);
+  line-height: var(--lh-button);
+  letter-spacing: var(--ls-divider);
+  color: var(--color-text-divider);
+  text-align: center;
+}
+
+/* Плашки тестового и демо-режима — не из макета, обязательны по требованиям.
+ * Стоят в нижнем отступе карточки, чтобы не сдвигать элементы макета. */
+.auth-modes {
+  position: absolute;
+  left: var(--auth-pad-x);
+  right: var(--auth-pad-x);
+  bottom: 20px;
+  display: grid;
+  gap: 6px;
+}
+
+.auth-modes .badge {
+  display: block;
+  margin: 0;
+  border-radius: var(--radius-bubble);
 }
 
 /* ---------- Каркас ---------- */
@@ -1109,6 +1267,33 @@ h2 {
 @media (max-width: 720px) {
   body {
     font-size: 14px;
+  }
+
+  /* Вход на телефоне: карточка во всю ширину, высота по содержимому,
+   * плашки режимов — обычным блоком под кнопками. Узкого кадра в макете нет. */
+  .auth {
+    padding: 16px;
+  }
+
+  .auth-card,
+  .auth-card-register {
+    min-height: 0;
+    padding: 40px 20px 24px;
+    border-radius: var(--radius-field);
+  }
+
+  .auth-title {
+    font-size: 24px;
+  }
+
+  .auth-divider {
+    grid-template-columns: 1fr auto 1fr;
+    column-gap: 16px;
+  }
+
+  .auth-modes {
+    position: static;
+    margin-top: 20px;
   }
 
   .app-header {

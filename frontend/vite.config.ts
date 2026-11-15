@@ -38,6 +38,10 @@ export default defineConfig(({ mode }) => {
       // Сборка кладётся в frontend/dist; backend раздаёт её с того же origin.
       outDir: 'dist',
       sourcemap: false,
+      // Картинки и шрифты — только отдельными файлами. По умолчанию Vite встраивает
+      // файлы меньше 4 КБ как data:-адрес, а CSP backend (default-src 'self')
+      // такие адреса блокирует: иконки из макета не показались бы.
+      assetsInlineLimit: 0,
     },
   }
 })

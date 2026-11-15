@@ -74,7 +74,8 @@ export async function registerFresh(page, prefix) {
   const email = `${prefix}.${Date.now()}@example.test`
   await page.goto(BASE)
   await page.waitForSelector('.auth-card')
-  await page.getByRole('tab', { name: 'Регистрация' }).click()
+  // Вкладок нет (макет Figma 15:68): на регистрацию переключает кнопка «Зарегистрируйтесь».
+  await page.getByRole('button', { name: 'Зарегистрируйтесь' }).click()
   await page.getByLabel('Электронная почта').fill(email)
   await page.getByLabel('Пароль').fill('TestPass12345')
   await page.getByRole('button', { name: 'Создать аккаунт' }).click()
