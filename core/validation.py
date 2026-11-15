@@ -177,9 +177,11 @@ def assemble(raw, chunks, request, *, demo=False, truncated=False, secret='') ->
         verified = (isinstance(draft, str) and bool(draft.strip()) and len(draft) <= 3000
                     and all(not line.strip() or any(line.strip() in text for text in summary_texts)
                             for line in draft.splitlines()))
-        # После отказа от продукта даже дословный черновик модели может
-        # содержать только мощность и пропустить оставшуюся задачу клиента.
-        if excluded or not summary_requested or not verified:
+        # После разрешения поправок даже дословный черновик модели может
+        # содержать только мощность и пропустить исправленный объект/задачу.
+        # Восстанавливаем его из актуальных выдержек целиком.
+        if (excluded or not summary_requested or not verified
+                or summary_texts != user_texts[1:] + user_texts[:1]):
             # Неподтверждённый или незапрошенный черновик не стирает ответ.
             # При явной просьбе ниже восстановим исходные выдержки.
             raw = dict(raw, summary_draft=None)

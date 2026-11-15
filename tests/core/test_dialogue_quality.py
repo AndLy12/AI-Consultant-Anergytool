@@ -305,3 +305,58 @@ def test_enumerating_product_conditions_does_not_order_card():
     request = CoreRequest(message='Перечисли условия подключения станции.')
     result = assemble({'status': 'insufficient_data'}, (), request)
     assert result.summary_draft is None
+
+
+@pytest.mark.parametrize('old,new,absent,expected', [
+    ('Объект пока называем складом.', 'Уточнение: это завод, не склад.', 'склад', 'завод'),
+    ('Сейчас техник вручную снимает показания.', 'Поправка: сбор уже автоматический.',
+     'вручную', 'автоматический'),
+    ('У нас склад мощностью 600 кВт.', 'Мощность 700 кВт. Исправляю: мощность 900 кВт.',
+     '700 кВт', '900 кВт'),
+])
+def test_development_corrections_remove_obsolete_card_facts(old, new, absent, expected):
+    request = CoreRequest(message='Подготовь резюме.', history=[
+        {'role': 'user', 'content': old}, {'role': 'user', 'content': new}])
+    draft = assemble({'status': 'insufficient_data'}, (), request).summary_draft
+    assert expected in draft
+    assert absent.lower() not in draft.lower()
+
+
+def test_model_partial_summary_does_not_drop_corrected_object():
+    request = CoreRequest(message='Подготовь резюме.', history=[
+        {'role': 'user', 'content': 'Склад мощностью 600 кВт.'},
+        {'role': 'user', 'content': 'Исправляю: завод мощностью 900 кВт.'}])
+    draft = assemble({'status': 'insufficient_data', 'summary_draft': '900 кВт'}, (), request).summary_draft
+    assert '900 кВт' in draft
+    assert 'завод' in draft
+    assert '600' not in draft
+
+
+def test_named_object_correction_changes_only_that_object():
+    """Разработческая цепочка с А и Б имеет явную привязку поправки."""
+    request = CoreRequest(message='Перечисли оба объекта для заявки.', history=[
+        {'role': 'user', 'content': 'Объект А имеет 600 кВт, объект Б — 900 кВт.'},
+        {'role': 'user', 'content': 'По объекту Б поправка: 1200 кВт.'}])
+    draft = assemble({'status': 'insufficient_data'}, (), request).summary_draft
+    assert 'Объект А имеет 600 кВт' in draft
+    assert 'объекту Б поправка: 1200 кВт' in draft
+    assert '900' not in draft
+
+
+def test_ambiguous_object_correction_keeps_history_for_confirmation():
+    """Без метки объекта нельзя удалять значение другого объекта по догадке."""
+    request = CoreRequest(message='Подготовь резюме.', history=[
+        {'role': 'user', 'content': 'Объект А имеет 600 кВт, объект Б — 900 кВт.'},
+        {'role': 'user', 'content': 'У одного из них поправка: 1200 кВт.'}])
+    draft = assemble({'status': 'insufficient_data'}, (), request).summary_draft
+    assert '600' in draft and '900' in draft and '1200' in draft
+
+
+def test_named_objects_do_not_bypass_excluded_product_filter():
+    """Привязка мощностей к меткам не возвращает исключённую солнечную задачу."""
+    request = CoreRequest(message='Солнечную станцию исключаем, нужен только учёт. Подготовь резюме.',
+        history=[{'role': 'user', 'content': 'Объект А имеет 600 кВт. Рассматриваем солнечную станцию.'}])
+    draft = assemble({'status': 'insufficient_data'}, (), request).summary_draft
+    assert '600 кВт' in draft
+    assert 'только учёт' in draft
+    assert 'солнечн' not in draft.lower()

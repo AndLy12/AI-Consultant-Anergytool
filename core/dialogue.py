@@ -218,18 +218,30 @@ _NUMBERED_POWER = re.compile(
     r'(?P<number>перв|втор)(?:ый|ой|ого)\s+(?P<object>склад|завод|офис|магазин)а?'
     r'[:\s]+(?:мощность[:\s]+)?\d+(?:[.,]\d+)?\s*(?:кВт|МВт)', re.I)
 
+_NAMED_POWER = re.compile(
+    r'(?:по\s+)?объект(?:у|а)?\s+(?P<label>[а-яa-z]|[0-9]+)\s+'
+    r'(?:имеет\s+|[—:-]\s*)?(?:(?:поправка|исправляю|уточняю):\s*)?'
+    r'\d+(?:[.,]\d+)?\s*(?:кВт|МВт)', re.I)
+
 
 def _current_card_messages(texts, active):
     """Убираем только однозначно заменённые выдержки до разбора остальных поправок."""
     removed = [set() for _ in texts]
     latest = {}
     for turn, text in enumerate(texts):
-        for span in re.finditer(r'\S.*?(?:[.!?;](?=\s|$)|(?=\n|$))', text):
-            clean = span.group().rstrip('.;')
+        for span in re.finditer(r'\S.*?(?:[.!?;](?=\s|$)|,(?=\s*объект\b)|(?=\n|$))', text):
+            clean = span.group().rstrip('.;,')
             match = _NUMBERED_POWER.fullmatch(clean)
             if match:
                 key = (match['number'].lower(), match['object'].lower())
                 if key in latest and re.match(r'поправка|исправляю|уточняю', clean, re.I):
+                    old_turn, old_span = latest[key]
+                    removed[old_turn].add(old_span)
+                latest[key] = (turn, span.span())
+            named = _NAMED_POWER.fullmatch(clean)
+            if named:
+                key = ('named', named['label'].lower())
+                if key in latest and re.search(r'поправка|исправляю|уточняю', clean, re.I):
                     old_turn, old_span = latest[key]
                     removed[old_turn].add(old_span)
                 latest[key] = (turn, span.span())
@@ -261,10 +273,16 @@ def summary_excerpts(texts: list[str], excluded: tuple[str, ...] = (), active: t
     """
     texts = _current_card_messages(texts, active)
     correction = re.compile(
-        r'исправля\w*|поправ\w*|уточняю|ошибся|ошиблась|'
+        r'исправля\w*|поправ\w*|уточняю|уточнение|ошибся|ошиблась|'
         r'\bне\s+(?!только\b)[^.!?\n]{1,40}\s+а\s+', re.I)
     if not excluded and not any(correction.search(text) for text in texts):
         return texts
+    # При нескольких объектах не сводим мощность к общему слоту. Явные
+    # метки уже разрешены выше; неопределённые поправки требуют подтверждения.
+    separate_objects = any(_NAMED_POWER.search(text) or (
+        correction.search(text)
+        and re.search(r'перв\w*|втор\w*|друг\w*|одн\w*\s+из', text, re.I))
+        for text in texts)
     value = r'\d+(?:[ \u00a0]\d{3})*(?:[.,]\d+)?\s*(?:(?:тыс(?:яч\w*)?\.?|млн|миллион\w*)\s*)?'
     quantity = (r'(?:(?:не\s+(?:менее|более|ниже|выше)|от|до|около|примерно)\s+)?' + value
                 + r'(?:\s*(?:[-–—]|до)\s*' + value + r')?')
@@ -276,25 +294,20 @@ def summary_excerpts(texts: list[str], excluded: tuple[str, ...] = (), active: t
             r'(?:[км]вт(?!\s*[·⋅*-]?\s*ч\b)|киловатт\w*(?![- ]час)|мегаватт\w*(?![- ]час))\b', re.I)),
         ('object', re.compile(r'\b(?:склад\w*|завод\w*|производств\w*|офис\w*|магазин\w*|бизнес[- ]центр\w*)\b', re.I)),
         ('metering', re.compile(r'\b(?:ручн\w*|автоматическ\w*|автоматизированн\w*)\s+'
-                               r'(?:сбор\w*(?:\s+показан\w*)?|уч[её]т\w*)|\bАСКУЭ\b', re.I)),
+                               r'(?:сбор\w*(?:\s+показан\w*)?|уч[её]т\w*)|'
+                               r'\bсбор\w*\s+(?:уже\s+)?(?:автоматическ\w*|ручн\w*)|'
+                               r'\bвручную\s+снима\w*\s+показан\w*|\bАСКУЭ\b', re.I)),
     )
     records = []
     for text in texts:
-        # У разных объектов одноимённые параметры не являются противоречием.
-        # Для таких поправок оставляем исходную хронологию для ручного разбора.
-        if correction.search(text) and re.search(r'перв\w*|втор\w*|друг\w*|одн\w*\s+из', text, re.I):
-            return texts
         facts = []
-        for slot, pattern in patterns:
+        for slot, pattern in (() if separate_objects else patterns):
             facts.extend((slot, match.group(), match.start(), match.end()) for match in pattern.finditer(text))
         # КВт·ч нельзя одновременно принять за мощность, в том числе при
         # написании единицы словами. Более длинный показатель имеет приоритет.
         facts = [fact for fact in facts if fact[0] != 'power' or not any(
             other[0] == 'consumption' and other[2] <= fact[2] < other[3] for other in facts)]
         facts = [fact for fact in facts if not re.search(r'\b(?:не|вместо)\s+$', text[:fact[2]], re.I)]
-        if correction.search(text):
-            replaced = {slot for slot, _, _, _ in facts}
-            records = [(slot, quote) for slot, quote in records if slot not in replaced]
         # Не разрываем десятичные числа и «тыс.» внутри уже найденной величины.
         boundaries = [0]
         for match in re.finditer(r'[.!?;,\n]+', text):
@@ -311,6 +324,11 @@ def summary_excerpts(texts: list[str], excluded: tuple[str, ...] = (), active: t
                     r'^(?:а\s+)?не\s+(?!менее\b|более\b|ниже\b|выше\b|меньше\b|больше\b)', clause, re.I):
                 continue
             present = [(slot, quote) for slot, quote, _, _ in facts if quote in clause]
+            if correction.search(text[:end]):
+                # Исправление в конце реплики заменяет и прежнее значение
+                # из её начала, а не только факты предыдущих сообщений.
+                replaced = {slot for slot, _ in present}
+                records = [(slot, quote) for slot, quote in records if slot not in replaced]
             if excluded:
                 # В карточке сохраняем факты об объекте отдельно от снятой темы.
                 # Вопросы клиента и фразы об исключённом продукте не являются заявкой.
