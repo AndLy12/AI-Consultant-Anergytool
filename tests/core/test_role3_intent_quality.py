@@ -1,8 +1,8 @@
 """Независимые минимальные пары по намерению, только синтетические источники.
 
-Production-код не исправляем. xfail отмечает подтверждённые ограничения 6v;
-это не пройденные критерии выпуска. strict XPASS заставит пересмотреть отметку
-после исправления кандидата. Никаких вызовов модели здесь нет.
+Проверки baseline сохранены без ослабления утверждений. В интеграционной
+версии ожидаемые падения сняты после повторного запуска с --runxfail:
+исправления подтверждены на этих синтетических входах. Модель здесь не вызывается.
 """
 
 import pytest
@@ -46,7 +46,6 @@ def test_including_solar_or_double_negative_keeps_solar(index, message):
     assert 'Для солнечной станции' in required_sections(index, message)
 
 
-@pytest.mark.xfail(strict=True, reason='R3-INT-01: baseline 6v не различает отказ и упоминание продукта; см. ROLE3_FINDINGS.md')
 @pytest.mark.parametrize('message', [
     'Панели не нужны, нужен учёт по арендаторам. С чего начать?',
     'Не солнечные панели, а учёт по арендаторам. С чего начать?',
@@ -58,7 +57,6 @@ def test_excluded_solar_is_not_a_required_checklist(index, message):
     assert 'Для солнечной станции' not in sections
 
 
-@pytest.mark.xfail(strict=True, reason='R3-INT-02: baseline 6v повышает старую тему ассистента; см. ROLE3_FINDINGS.md')
 def test_assistant_topic_does_not_override_user_rejection(index):
     sections = required_sections(index, 'С чего начать?', [
         {'role': 'user', 'content': 'От солнечных панелей отказались. Нужен учёт по арендаторам.'},

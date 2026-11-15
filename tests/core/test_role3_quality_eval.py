@@ -2,6 +2,7 @@
 
 from copy import deepcopy
 import json
+import os
 from pathlib import Path
 import zipfile
 from types import SimpleNamespace
@@ -42,7 +43,10 @@ def test_freeze_partition_hashes_and_existing_destination(inputs, tmp_path):
     assert report["model_calls"] == 0
     assert report["semantic_alignment"] == "pending_independent_source_review"
     assert qa.audit(bundle, report["manifest_sha256"]) == report
-    assert (bundle / "final.jsonl").stat().st_mode & 0o777 == 0o600
+    # Windows не реализует POSIX-биты группы/остальных через os.open(mode).
+    # Здесь маску проверяем на POSIX; защиту Windows ACL этот тест не подтверждает.
+    if os.name != 'nt':
+        assert (bundle / "final.jsonl").stat().st_mode & 0o777 == 0o600
     with pytest.raises(FileExistsError):
         qa.freeze(source, corpus, bundle, "a" * 40)
     assert qa.audit(bundle)["manifest_sha256"] == report["manifest_sha256"]
