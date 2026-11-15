@@ -588,5 +588,3 @@ def test_judge_reference_preserves_leading_zero_ids(tmp_path):
     reference.write_text('id,answer\n1,Выдержка\n', encoding='utf-8')
     with pytest.raises(ValueError):
         read_references(questions, reference)
-
-

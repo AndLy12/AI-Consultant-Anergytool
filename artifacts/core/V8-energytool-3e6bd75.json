@@ -1,0 +1,11 @@
+{
+  "core_code_sha": "3e6bd75d1e1b30822d6adf20c328fa8b94fbac3d",
+  "files": 13,
+  "bytes": 55460,
+  "sha256": "81a6c690866deaac8abd6a8ebd28fd38d382f368f5d9c645bdc40f367ff5b070",
+  "compilation": "passed",
+  "isolated_validation": {
+    "status": "format_valid",
+    "rows": 82
+  }
+}

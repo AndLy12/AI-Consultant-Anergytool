@@ -452,5 +452,3 @@ def test_checklist_preserves_relevant_next_step(question):
                        'evidence': ['D1'], 'question': question}, chunks,
                       CoreRequest(message='Для учёта по арендаторам какие данные понадобятся?'))
     assert result.answer.endswith(question)
-
-
