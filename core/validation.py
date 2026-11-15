@@ -169,8 +169,9 @@ def assemble(raw, chunks, request, *, demo=False, truncated=False, secret='') ->
     summary_requested = bool(SUMMARY_REQUEST.search(request.message)
                              and not SUMMARY_DECLINED.search(request.message))
     user_texts = [request.message] + [turn.content for turn in request.history if turn.role == 'user']
-    excluded = search_intent(request).excluded if summary_requested else ()
-    summary_texts = summary_excerpts(user_texts[1:] + user_texts[:1], excluded) if summary_requested else user_texts
+    intent = search_intent(request) if summary_requested else None
+    excluded = intent.excluded if intent else ()
+    summary_texts = summary_excerpts(user_texts[1:] + user_texts[:1], excluded, intent.active) if intent else user_texts
     if isinstance(raw, dict) and raw.get('summary_draft') is not None:
         draft = raw['summary_draft']
         verified = (isinstance(draft, str) and bool(draft.strip()) and len(draft) <= 3000
@@ -284,8 +285,15 @@ def assemble(raw, chunks, request, *, demo=False, truncated=False, secret='') ->
         # сохраняют хронологию и требуют проверки пользователем. Длинные
         # выдержки пропускаем целиком, не обрезая фразу в середине.
         parts, size = [], 0
-        candidates = [text for text in summary_texts if not (
-            request.history and SUMMARY_REQUEST.search(text))]
+        candidates = []
+        for text in summary_texts:
+            if request.history and SUMMARY_REQUEST.search(text):
+                # Отдельное предложение с поручением может следовать за фактом
+                # в той же реплике. Сохраняем фактическую часть дословно.
+                candidates.extend(sentence for sentence in re.split(r'(?<=[.!?;])\s+', text)
+                                  if not SUMMARY_REQUEST.search(sentence))
+            else:
+                candidates.append(text)
         for text in reversed(candidates):
             if size + len(text) + 1 <= 3000:
                 parts.append(text)

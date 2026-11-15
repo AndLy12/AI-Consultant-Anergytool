@@ -270,3 +270,21 @@ def test_application_card_after_product_and_power_correction(draft):
     assert 'только учёт электроэнергии' in result.summary_draft
     assert '600' not in result.summary_draft
     assert 'солнечн' not in result.summary_draft.lower()
+
+
+@pytest.mark.parametrize('history,expected,absent', [
+    (['Первый склад: 600 кВт; второй склад: 900 кВт.',
+      'Поправка: у второго склада 800 кВт.'],
+     ['Первый склад: 600 кВт', 'второго склада 800 кВт'], ['900 кВт']),
+    (['Солнечную станцию исключаем.', 'Теперь снова нужна солнечная станция.'],
+     ['снова нужна солнечная станция'], ['исключаем']),
+    (['У нас склад.','Нужен учёт электроэнергии. Подготовь резюме для специалиста.'],
+     ['склад', 'учёт электроэнергии'], ['Подготовь']),
+])
+def test_card_keeps_current_facts(history, expected, absent):
+    request = CoreRequest(message=history[-1] if 'Подготовь' in history[-1] else 'Подготовь резюме.',
+        history=[{'role': 'user', 'content': text} for text in
+                 (history[:-1] if 'Подготовь' in history[-1] else history)])
+    draft = assemble({'status': 'insufficient_data'}, (), request).summary_draft
+    assert all(value in draft for value in expected)
+    assert all(value not in draft for value in absent)

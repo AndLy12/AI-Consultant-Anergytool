@@ -210,13 +210,56 @@ def bounded_history(request: CoreRequest, budget: int) -> tuple[list[dict], bool
     return chosen, len(chosen) != len(request.history)
 
 
-def summary_excerpts(texts: list[str], excluded: tuple[str, ...] = ()) -> list[str]:
+# Удалять прежнее значение у нескольких объектов можно только при явном
+# совпадении номера, типа объекта и показателя. Полное совпадение фразы
+# защищает остальные сведения из той же реплики.
+_NUMBERED_POWER = re.compile(
+    r'(?:поправка|исправляю|уточняю)?[:\s]*(?:у\s+)?'
+    r'(?P<number>перв|втор)(?:ый|ой|ого)\s+(?P<object>склад|завод|офис|магазин)а?'
+    r'[:\s]+(?:мощность[:\s]+)?\d+(?:[.,]\d+)?\s*(?:кВт|МВт)', re.I)
+
+
+def _current_card_messages(texts, active):
+    """Убираем только однозначно заменённые выдержки до разбора остальных поправок."""
+    removed = [set() for _ in texts]
+    latest = {}
+    for turn, text in enumerate(texts):
+        for span in re.finditer(r'\S.*?(?:[.!?;](?=\s|$)|(?=\n|$))', text):
+            clean = span.group().rstrip('.;')
+            match = _NUMBERED_POWER.fullmatch(clean)
+            if match:
+                key = (match['number'].lower(), match['object'].lower())
+                if key in latest and re.match(r'поправка|исправляю|уточняю', clean, re.I):
+                    old_turn, old_span = latest[key]
+                    removed[old_turn].add(old_span)
+                latest[key] = (turn, span.span())
+            events = list(_topic_events(clean))
+            if (events and all(not enabled and title in active for title, enabled, _ in events)
+                    and re.fullmatch(r'[а-яё -]+\s+исключаем', clean, re.I)):
+                removed[turn].add(span.span())
+
+    # Возвращаем непрерывные фрагменты исходной реплики: склейка через
+    # удалённую фразу не пройдёт проверку происхождения текста карточки.
+    result = []
+    for text, spans in zip(texts, removed):
+        start = 0
+        for left, right in sorted(spans):
+            if prefix := text[start:left].strip():
+                result.append(prefix)
+            start = right
+        if tail := text[start:].strip():
+            result.append(tail)
+    return result
+
+
+def summary_excerpts(texts: list[str], excluded: tuple[str, ...] = (), active: tuple[str, ...] = ()) -> list[str]:
     """Для явных поправок не копируем прежнее значение в запасной черновик.
 
     Обрабатываем только названные с единицами параметры и явную коррекцию.
     Каждый результат — исходная выдержка; разные объекты и неопределённые ссылки
     не сводим к одному значению. Это не замена смысловой проверке резюме моделью.
     """
+    texts = _current_card_messages(texts, active)
     correction = re.compile(
         r'исправля\w*|поправ\w*|уточняю|ошибся|ошиблась|'
         r'\bне\s+(?!только\b)[^.!?\n]{1,40}\s+а\s+', re.I)
