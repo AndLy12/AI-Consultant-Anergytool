@@ -71,6 +71,15 @@ def history_for(item, completed):
         {'role': 'assistant', 'content': previous['response']['answer']}]
 
 
+def review_incomplete(row):
+    """Штатный контракт сообщает сбой проверки русским предупреждением."""
+    if 'response' not in row:
+        return None
+    warnings = row['response'].get('warnings', [])
+    return any(w in warnings for w in ('review_incomplete',
+                                      'Дополнительная проверка ответа не завершена.'))
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     for field in ('code-root', 'cases', 'data-dir', 'output'):
@@ -110,7 +119,12 @@ def main():
         if any(out.iterdir()):
             raise ValueError('Новый каталог результата должен быть пустым')
         models = httpx.get('http://127.0.0.1:1234/v1/models', timeout=10).json()
+        loaded = json.loads(subprocess.check_output(['lms', 'ps', '--json'], text=True))
+        matches = [m for m in loaded if m.get('identifier') == settings.model]
+        if len(matches) != 1:
+            raise ValueError('Фактическая загруженная модель не подтверждена LM Studio')
         passport.write_text(json.dumps({'identity': identity, 'started_at': utc(),
+                                       'loaded_model': matches[0],
                                        'provider_models': models, 'planned': len(plan),
                                        'source_alignment': 'pending_independent_review'},
                                       ensure_ascii=False, indent=2), encoding='utf-8')
@@ -192,8 +206,7 @@ def main():
             row.update(seconds=time.monotonic() - started, model_calls=active['calls'],
                        network_attempts=active['attempts'],
                        extra_network_attempts=max(0, active['attempts'] - active['calls']))
-            row['review_incomplete'] = ('review_incomplete' in row['response'].get('warnings', [])
-                                        if 'response' in row else None)
+            row['review_incomplete'] = review_incomplete(row)
             append(result_path, safe(row))
             append(out / 'sources.jsonl', safe({'id': row['id'], 'step': row['step'],
                    'sources': row.get('response', {}).get('sources'),
@@ -208,6 +221,10 @@ def main():
             writer = csv.writer(stream)
             writer.writerow(['id', 'answer'])
             writer.writerows((r['id'], r['response']['answer']) for r in rows if 'response' in r)
+        with (out / 'questions.csv').open('w', encoding='utf-8', newline='') as stream:
+            writer = csv.writer(stream)
+            writer.writerow(['id', 'question'])
+            writer.writerows((r['id'], json.dumps(r['request'], ensure_ascii=False)) for r in rows)
         summary = {'completed': len(rows), 'planned': len(plan),
                    'errors': sum('error' in r for r in rows),
                    'pending': [i['id'] for i in plan if i['id'] not in completed],

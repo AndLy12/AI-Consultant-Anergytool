@@ -1,7 +1,7 @@
 """Защита живого QA от подмены истории и повторного использования чужих ответов."""
 
 import pytest
-from scripts.check_core_development import history_for, queue
+from scripts.check_core_development import history_for, queue, review_incomplete
 
 
 def test_live_history_uses_actual_previous_answer_and_keeps_zero_id():
@@ -32,3 +32,10 @@ def test_fixed_history_is_not_replaced_and_hidden_split_is_rejected():
         queue([dict(case, evaluation_mode='live_chain')])
     with pytest.raises(ValueError):
         queue([case, case])
+
+
+def test_russian_review_warning_is_not_reported_as_successful_review():
+    assert review_incomplete({'response': {'warnings': [
+        'Дополнительная проверка ответа не завершена.']}}) is True
+    assert review_incomplete({'response': {'warnings': []}}) is False
+    assert review_incomplete({'error': {'type': 'ProviderError'}}) is None
