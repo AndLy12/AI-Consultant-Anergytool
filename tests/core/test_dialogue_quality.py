@@ -452,3 +452,81 @@ def test_checklist_preserves_relevant_next_step(question):
                        'evidence': ['D1'], 'question': question}, chunks,
                       CoreRequest(message='Для учёта по арендаторам какие данные понадобятся?'))
     assert result.answer.endswith(question)
+
+
+@pytest.mark.parametrize('answer', [
+    'Кнопка «Как подключить?» открывает инструкцию.',
+    'Раздел "Какие сведения нужны?" содержит список.',
+    'Метка «Укажите прибор» относится к элементу интерфейса.',
+])
+def test_quoted_interface_text_does_not_suppress_real_follow_up(answer):
+    """Цитата интерфейса не означает, что клиенту уже задан уточняющий вопрос."""
+    chunks = make_chunks('training.md', [('Подключение зависит от модели прибора.', None, None)], 1800)
+    response = assemble({'status': 'answered', 'answer': answer, 'evidence': ['D1'],
+                         'question': 'Какая модель прибора установлена?'}, chunks,
+                        CoreRequest(message='Как подключить наш прибор?'))
+    assert response.answer.endswith('Какая модель прибора установлена?')
+
+
+def test_existing_question_before_explanation_blocks_second_question():
+    """Пояснение после вопроса не превращает его в отсутствие следующего шага."""
+    chunks = make_chunks('training.md', [('Подключение зависит от модели прибора.', None, None)], 1800)
+    answer = 'Какая модель прибора установлена? Это нужно для проверки совместимости.'
+    response = assemble({'status': 'answered', 'answer': answer, 'evidence': ['D1'],
+                         'question': 'Какой у вас тип модуля?'}, chunks,
+                        CoreRequest(message='Можно подключить прибор?'))
+    assert response.answer == answer
+
+
+def test_interface_label_equal_to_follow_up_does_not_count_as_duplicate():
+    """Упоминание вопроса в названии кнопки не заменяет вопрос клиенту."""
+    chunks = make_chunks('training.md', [('Для подключения нужна модель прибора.', None, None)], 1800)
+    question = 'Какая модель прибора установлена?'
+    response = assemble({'status': 'answered', 'answer': f'Кнопка «{question}» открывает форму.',
+                         'evidence': ['D1'], 'question': question}, chunks,
+                        CoreRequest(message='Как начать подключение?'))
+    assert response.answer.endswith('\n\n' + question)
+
+
+@pytest.mark.parametrize('issues,has_question', [([], False), (['Нужен конкретный следующий параметр'], True)])
+def test_review_follow_up_change_requires_reported_issue(tmp_path, issues, has_question):
+    """Редактор изменяет следующий шаг только вместе с конкретным замечанием."""
+    chunks = make_chunks('training.md', [('Учёт доступен после проверки модели прибора.', None, None)], 1800)
+
+    class Client:
+        def complete(self, messages, deadline):
+            return {'status': 'answered', 'answer': 'Учёт доступен после проверки модели.', 'evidence': ['D1']}
+
+        def review(self, messages, deadline):
+            return {'issues': issues, 'follow_up_question': 'Какая модель прибора установлена?',
+                    'result': {'status': 'answered', 'answer': 'Учёт доступен после проверки модели.',
+                               'evidence': ['D1']}}
+
+    cfg = Settings(tmp_path, base_url='http://unit.test/v1', model='model', api_key='placeholder')
+    response = EnergytoolCore(cfg, chunks=chunks, client=Client()).respond(CoreRequest(message='Учёт доступен?'))
+    assert ('Какая модель прибора установлена?' in response.answer) == has_question
+    assert response.sources
+    assert not response.warnings
+
+
+@pytest.mark.parametrize('question,expected', [
+    ('Можно провести расчёт?', False),
+    ('Какой тип прибора установлен?', True),
+    ('Какова площадь кровли?', False),
+])
+def test_checklist_follow_up_keeps_parameter_not_generic_action(question, expected):
+    """После списка допускается предметное уточнение из источника, общий старт отсекается."""
+    chunks = make_chunks('training.md', [('Для расчёта нужны тип прибора и схема сбора данных.', None, None)], 1800)
+    response = assemble({'status': 'answered', 'answer': 'Нужны тип прибора и схема сбора данных.',
+                         'evidence': ['D1'], 'question': question}, chunks,
+                        CoreRequest(message='Какие данные нужны для расчёта?'))
+    assert response.answer.endswith(question) == expected
+
+
+def test_quoted_direct_question_still_blocks_duplicate_follow_up():
+    """Без указания на подпись интерфейса цитата вопроса остаётся обращением к клиенту."""
+    chunks = make_chunks('training.md', [('Для подключения нужна модель прибора.', None, None)], 1800)
+    answer = '«Какая модель прибора установлена?» Это нужно для подключения.'
+    response = assemble({'status': 'answered', 'answer': answer, 'evidence': ['D1'],
+                         'question': 'Какой у вас модуль?'}, chunks, CoreRequest(message='Можно подключить?'))
+    assert response.answer == answer

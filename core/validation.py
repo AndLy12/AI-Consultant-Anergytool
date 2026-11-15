@@ -29,6 +29,11 @@ INLINE_ALIAS = re.compile(r'\s*(?:\((D\d+(?:\s*,\s*D\d+)*)\)|\[(D\d+(?:\s*,\s*D\
 # Словарь названий параметров пропускал вежливые вставки и новые параметры,
 # из-за чего review добавлял ту же просьбу второй раз отдельным вопросом.
 EMBEDDED_QUESTION = re.compile(r'\b(?:уточните|подскажите|сообщите|укажите|назовите)\b', re.I)
+# Вопрос в явно названной кнопке/разделе не обращён к клиенту. Убираем
+# такие подписи только из проверки следующего шага, сохраняя ответ дословно.
+INTERFACE_LABEL = re.compile(
+    r'\b(?:кнопк\w*|раздел\w*|метк\w*|пункт\w*|поле|поля|надпис\w*)\s+'
+    r'(?:«[^»\n]*»|"[^"\n]*"|“[^”\n]*”)', re.I)
 VISIBLE_SUMMARY = re.compile(
     r'\b(?:резюме|черновик|сводка|итог|итоги)(?:[ \t]+[^:.!?\n]{1,60})?[ \t]*[:—-]', re.I)
 FREE_WORK = re.compile(
@@ -246,9 +251,10 @@ def assemble(raw, chunks, request, *, demo=False, truncated=False, secret='') ->
     if selected.status == 'answered':
         answer = (selected.answer.strip() if selected.answer is not None
                   else 'В материалах базы найдено:\n\n' + '\n\n'.join(lines))
-        # Вопрос может находиться перед пояснением, а не в конце текста.
-        # В таком случае отдельный question не должен добавлять второй вопрос.
-        had_question = '?' in answer
+        # Вопрос может находиться перед пояснением. Подпись интерфейса
+        # при этом не считается вопросом или просьбой к клиенту.
+        step_text = INTERFACE_LABEL.sub('', answer)
+        had_question = '?' in step_text
         photo_docs = {s.document_id for s in sources if 'распознавание показаний' in s.title.lower()}
         commercial_verification = re.search(
             r'(?:коммерческ\w*\s+уч[её]т|начислен\w*)[^.!?\n]{0,180}'
@@ -280,7 +286,7 @@ def assemble(raw, chunks, request, *, demo=False, truncated=False, secret='') ->
         if (selected.question and not had_question
                 and (not data_checklist_question(request.message)
                      or checklist_question_relevant(selected.question, request.message, sources))
-                and not EMBEDDED_QUESTION.search(answer) and selected.question.strip() not in answer):
+                and not EMBEDDED_QUESTION.search(step_text) and selected.question.strip() not in step_text):
             answer += '\n\n' + selected.question.strip()
         def hide_aliases(match):
             # Метки D1 и далее нужны выбору источников внутри запроса.
