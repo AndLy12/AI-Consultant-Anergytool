@@ -5,7 +5,7 @@ from copy import deepcopy
 import re
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 from core_contract import CoreResponse, CoreUnavailable, ModelResponseError, Source
-from core.dialogue import summary_excerpts, data_checklist_question
+from core.dialogue import search_intent, summary_excerpts, data_checklist_question
 
 
 # Запрос на черновик распознаём по явному действию. Слово «итоговая»
@@ -169,13 +169,16 @@ def assemble(raw, chunks, request, *, demo=False, truncated=False, secret='') ->
     summary_requested = bool(SUMMARY_REQUEST.search(request.message)
                              and not SUMMARY_DECLINED.search(request.message))
     user_texts = [request.message] + [turn.content for turn in request.history if turn.role == 'user']
-    summary_texts = summary_excerpts(user_texts[1:] + user_texts[:1]) if summary_requested else user_texts
+    excluded = search_intent(request).excluded if summary_requested else ()
+    summary_texts = summary_excerpts(user_texts[1:] + user_texts[:1], excluded) if summary_requested else user_texts
     if isinstance(raw, dict) and raw.get('summary_draft') is not None:
         draft = raw['summary_draft']
         verified = (isinstance(draft, str) and bool(draft.strip()) and len(draft) <= 3000
                     and all(not line.strip() or any(line.strip() in text for text in summary_texts)
                             for line in draft.splitlines()))
-        if not summary_requested or not verified:
+        # После отказа от продукта даже дословный черновик модели может
+        # содержать только мощность и пропустить оставшуюся задачу клиента.
+        if excluded or not summary_requested or not verified:
             # Неподтверждённый или незапрошенный черновик не стирает ответ.
             # При явной просьбе ниже восстановим исходные выдержки.
             raw = dict(raw, summary_draft=None)

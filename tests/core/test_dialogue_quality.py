@@ -256,3 +256,17 @@ def test_solar_assessment_preparation_question_uses_checklist_intent():
 
     assert data_checklist_question('Рассматриваем солнечную станцию. Что нужно для оценки?')
     assert not data_checklist_question('Можете оценить мощность станции?')
+
+
+@pytest.mark.parametrize('draft', [None, 'Рассматриваем солнечную станцию', '900 кВт'])
+def test_application_card_after_product_and_power_correction(draft):
+    """Карточка сохраняет обе поправки даже при неполном черновике от модели."""
+    request = CoreRequest(history=[{'role': 'user', 'content':
+        'У нас склад мощностью 600 кВт. Рассматриваем солнечную станцию. Что нужно для оценки?'}],
+        message='Исправляю: мощность склада 900 кВт. Солнечную станцию исключаем, '
+                'нужен только учёт электроэнергии. Подготовь резюме для специалиста.')
+    result = assemble({'status': 'insufficient_data', 'summary_draft': draft}, (), request)
+    assert '900 кВт' in result.summary_draft
+    assert 'только учёт электроэнергии' in result.summary_draft
+    assert '600' not in result.summary_draft
+    assert 'солнечн' not in result.summary_draft.lower()

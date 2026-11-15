@@ -34,8 +34,8 @@ RETURN_FIRST = re.compile(r'верн\w*[^.!?\n]{0,50}к\s+перв\w*\s+(?:во�
 # «Не требуются» описывает отказ, а «не требуют обслуживания» — свойство
 # продукта. Нельзя отбрасывать продукт по общему префиксу «требу».
 REFUSAL = re.compile(r'\bне\s+(?:нуж(?:ен|на|но|ны)|надо|интерес\w*|рассматрива\w*|планиру\w*|хот\w*|требу(?:ет|ют)ся)\b|\bотказ\w*\s+от\b|\bот\s+[^.!?;\n]{0,100}\bотказ\w*', re.I)
-EXCLUDED = re.compile(r'\bисключ[её]н(?:а|о|ы)?\b', re.I)
-DOUBLE_NEGATION = re.compile(r'\bне\s+(?:(?:мож\w*|буд\w*|хот\w*|планиру\w*)\s+)?отказ\w*\b|\bне\s+переста\w*\s+рассматрива\w*|\bне\s+исключ[её]н(?:а|о|ы)?\b', re.I)
+EXCLUDED = re.compile(r'\b(?:исключ[её]н(?:а|о|ы)?|исключаем)\b', re.I)
+DOUBLE_NEGATION = re.compile(r'\bне\s+(?:(?:мож\w*|буд\w*|хот\w*|планиру\w*)\s+)?отказ\w*\b|\bне\s+переста\w*\s+рассматрива\w*|\bне\s+(?:исключ[её]н(?:а|о|ы)?|исключаем)\b', re.I)
 PROPERTY_ACTION = re.compile(r'менять|замен\w*|покупать|устанавливать|передавать|оплачивать|подключать|обслужива\w*|очища\w*|мыть|ремонтир\w*|чистить', re.I)
 
 
@@ -210,7 +210,7 @@ def bounded_history(request: CoreRequest, budget: int) -> tuple[list[dict], bool
     return chosen, len(chosen) != len(request.history)
 
 
-def summary_excerpts(texts: list[str]) -> list[str]:
+def summary_excerpts(texts: list[str], excluded: tuple[str, ...] = ()) -> list[str]:
     """Для явных поправок не копируем прежнее значение в запасной черновик.
 
     Обрабатываем только названные с единицами параметры и явную коррекцию.
@@ -220,7 +220,7 @@ def summary_excerpts(texts: list[str]) -> list[str]:
     correction = re.compile(
         r'исправля\w*|поправ\w*|уточняю|ошибся|ошиблась|'
         r'\bне\s+(?!только\b)[^.!?\n]{1,40}\s+а\s+', re.I)
-    if not any(correction.search(text) for text in texts):
+    if not excluded and not any(correction.search(text) for text in texts):
         return texts
     value = r'\d+(?:[ \u00a0]\d{3})*(?:[.,]\d+)?\s*(?:(?:тыс(?:яч\w*)?\.?|млн|миллион\w*)\s*)?'
     quantity = (r'(?:(?:не\s+(?:менее|более|ниже|выше)|от|до|около|примерно)\s+)?' + value
@@ -229,7 +229,7 @@ def summary_excerpts(texts: list[str]) -> list[str]:
         ('consumption', re.compile(r'(?:потреблен\w*\s*[:—-]?\s*)?' + quantity +
             r'(?:[км]вт\s*[·⋅*-]?\s*ч|киловатт[- ]?час\w*|мегаватт[- ]?час\w*)'
             r'(?:\s*(?:в|за|/)\s*(?:месяц\w*|год\w*|сут\w*))?', re.I)),
-        ('power', re.compile(r'(?:мощност\w*\s*[:—-]?\s*)?' + quantity +
+        ('power', re.compile(r'(?:мощност\w*(?:\s+склада)?\s*[:—-]?\s*)?' + quantity +
             r'(?:[км]вт(?!\s*[·⋅*-]?\s*ч\b)|киловатт\w*(?![- ]час)|мегаватт\w*(?![- ]час))\b', re.I)),
         ('object', re.compile(r'\b(?:склад\w*|завод\w*|производств\w*|офис\w*|магазин\w*|бизнес[- ]центр\w*)\b', re.I)),
         ('metering', re.compile(r'\b(?:ручн\w*|автоматическ\w*|автоматизированн\w*)\s+'
@@ -268,7 +268,20 @@ def summary_excerpts(texts: list[str]) -> list[str]:
                     r'^(?:а\s+)?не\s+(?!менее\b|более\b|ниже\b|выше\b|меньше\b|больше\b)', clause, re.I):
                 continue
             present = [(slot, quote) for slot, quote, _, _ in facts if quote in clause]
-            records.extend(present or [(None, clause)])
+            if excluded:
+                # В карточке сохраняем факты об объекте отдельно от снятой темы.
+                # Вопросы клиента и фразы об исключённом продукте не являются заявкой.
+                if any(title in excluded for title, _, _ in _topic_events(clause)):
+                    records.extend((slot, quote) for slot, quote in present
+                                   if slot in {'object', 'power', 'consumption'})
+                    continue
+                if text[end:end + 1] == '?':
+                    continue
+            # Если показатель уже содержит название объекта, оставляем одну
+            # читаемую выдержку («мощность склада 900 кВт»).
+            records.extend([(slot, quote) for slot, quote in present
+                            if not any(quote != other and quote in other for _, other in present)]
+                           or [(None, clause)])
     return list(dict.fromkeys(quote for _, quote in records))
 
 
