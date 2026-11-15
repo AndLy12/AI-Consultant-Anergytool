@@ -83,7 +83,9 @@ def _topic_events(text: str):
         # Отказ от покупки/установки продукта отличается от отрицательного
         # свойства «SIM менять не нужно». Последнее не исключает платформу.
         acquisition_refusal = bool(re.search(
-            r'\bне\s+(?:хот\w*|планиру\w*|буд\w*)\s+(?:устанавливать|покупать|подключать)\b', clause, re.I))
+            r'\bне\s+(?:хот\w*|планиру\w*|буд\w*)\s+(?:устанавливать|покупать|подключать)\s+'
+            r'(?:(?:нов\w*|ваш\w*|эти)\s+)?(?:солнечн\w*\s+(?:панел\w*|станци\w*)|'
+            r'панел\w*|облачн\w*\s+платформ\w*|платформ\w*\s+уч[её]та)\b', clause, re.I))
         refusal = bool(not questioned and (REFUSAL.search(clause) or EXCLUDED.search(clause) or acquisition_refusal)
                        and not DOUBLE_NEGATION.search(clause)
                        and (acquisition_refusal or not PROPERTY_ACTION.search(clause)))

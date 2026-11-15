@@ -458,3 +458,14 @@ def test_without_product_question_preserves_sources():
     assert not intent.excluded
 
 
+@pytest.mark.parametrize('phrase', [
+    'Не хотим покупать новые SIM-карты для учёта.',
+    'Не хотим устанавливать новые счётчики для учёта.',
+])
+def test_refusal_of_extra_hardware_does_not_exclude_platform(phrase):
+    """Отказ от замены оборудования не означает отказ от самой услуги учёта."""
+    intent = search_intent(CoreRequest(message=phrase))
+    assert 'облачная платформа' in intent.active
+    assert 'облачная платформа' not in intent.excluded
+
+
