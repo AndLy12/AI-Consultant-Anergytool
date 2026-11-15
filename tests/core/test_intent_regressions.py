@@ -4,7 +4,7 @@ import json
 
 import pytest
 
-from core.dialogue import search_query
+from core.dialogue import search_intent, search_query
 from core.documents import make_chunks
 from core.config import Settings
 from core.engine import EnergytoolCore
@@ -67,6 +67,7 @@ def test_last_user_intent_wins_over_assistant_and_old_topic(index):
     hits = index.search_request(request, 5)
     assert hits[0].chunk.section == 'Для платформы учёта'
     assert all('Солнечные' not in h.chunk.title for h in hits)
+    assert '600' not in search_query(request)
 
 
 def test_preparation_for_metering_keeps_platform_in_genitive_case(index):
@@ -83,7 +84,6 @@ def test_preparation_for_metering_keeps_platform_in_genitive_case(index):
 ])
 def test_genitive_case_does_not_assign_other_resource_or_unknown_system(message):
     assert 'облачная платформа' not in search_intent(CoreRequest(message=message)).active
-    assert '600' not in search_query(request)
 
 
 def test_return_reactivates_excluded_product(index):
