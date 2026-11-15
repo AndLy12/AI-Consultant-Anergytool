@@ -1,6 +1,7 @@
 """Проверка цитат и ответа модели; наличие оснований не доказывает весь пересказ."""
 
 from typing import Annotated, Literal
+from copy import deepcopy
 import re
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 from core_contract import CoreResponse, CoreUnavailable, ModelResponseError, Source
@@ -111,6 +112,36 @@ class AnswerReview(BaseModel):
     issues: list[Annotated[str, Field(max_length=240)]] = Field(max_length=3)
     follow_up_question: Annotated[str, Field(min_length=3, max_length=300)] | None
     result: ModelSelection
+
+
+def generation_schema():
+    """Передаём провайдеру обязательные поля каждого статуса, включая основания.
+
+    Pydantic-валидаторы после генерации остаются обязательными: поддержка JSON
+    Schema у провайдера не гарантируется, а существование цитаты схема не проверяет.
+    Схема выводится из общего контракта, чтобы ограничения полей не расходились.
+    """
+    base = ModelSelection.model_json_schema()
+    definitions = base.pop('$defs', {})
+    branches = []
+    for status in ('answered', 'clarification_needed', 'insufficient_data', 'out_of_scope'):
+        branch = deepcopy(base)
+        branch['properties']['status'] = {'const': status, 'type': 'string'}
+        branch['required'] = ['status', 'evidence']
+        if status == 'answered':
+            branch['required'].append('answer')
+            branch['properties']['answer'] = {'type': 'string', 'minLength': 1, 'maxLength': 6000}
+            branch['properties']['evidence']['minItems'] = 1
+        else:
+            branch['properties']['answer'] = {'type': 'null'}
+            branch['properties']['evidence']['maxItems'] = 0
+            if status == 'clarification_needed':
+                branch['required'].append('question')
+                branch['properties']['question'] = {'type': 'string', 'minLength': 1, 'maxLength': 300}
+            else:
+                branch['properties']['question'] = {'type': 'null'}
+        branches.append(branch)
+    return {'$defs': definitions, 'oneOf': branches}
 
 
 def assemble(raw, chunks, request, *, demo=False, truncated=False, secret='') -> CoreResponse:

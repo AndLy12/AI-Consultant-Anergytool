@@ -5,7 +5,7 @@ import json
 import time
 import httpx
 from core_contract import CoreUnavailable, ModelResponseError, ProviderError
-from core.validation import AnswerReview
+from core.validation import AnswerReview, generation_schema
 
 MAX_RESPONSE_BYTES = 256 * 1024
 
@@ -93,7 +93,8 @@ class QwenClient:
             payload['response_format'] = {'type': self.json_format}
             if self.json_format == 'json_schema':
                 payload['response_format']['json_schema'] = {
-                    'name': 'response', 'strict': False, 'schema': response_schema or {'type': 'object'}}
+                    'name': 'response', 'strict': False,
+                    'schema': generation_schema() if response_schema is None else response_schema}
 
         for attempt in range(self.settings.retries + 1):
             try:

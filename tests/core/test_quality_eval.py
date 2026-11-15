@@ -485,3 +485,23 @@ def test_judge_resume_keeps_zero_ids_and_refuses_changed_inputs(tmp_path, monkey
     with pytest.raises(SystemExit) as error:
         judge.main()
     assert error.value.code == 2 and len(calls) == 2
+
+
+def test_generation_wire_schema_requires_answer_evidence_and_specific_question(tmp_path):
+    """Прежняя схема object позволяла декодеру опустить обязательные источники."""
+    def handler(request):
+        schema = json.loads(request.content)['response_format']['json_schema']['schema']
+        branches = {b['properties']['status']['const']: b for b in schema['oneOf']}
+        assert set(branches) == {'answered', 'clarification_needed', 'insufficient_data', 'out_of_scope'}
+        assert set(branches['answered']['required']) == {'status', 'answer', 'evidence'}
+        assert branches['answered']['properties']['evidence']['minItems'] == 1
+        assert branches['clarification_needed']['properties']['evidence']['maxItems'] == 0
+        assert 'question' in branches['clarification_needed']['required']
+        assert branches['insufficient_data']['properties']['question'] == {'type': 'null'}
+        assert 'Evidence' in schema['$defs']
+        return httpx.Response(200, json={'choices': [{'message': {'content':
+            '{"status":"insufficient_data","evidence":[]}'}}]})
+
+    cfg = Settings(tmp_path, base_url='http://unit.test/v1', model='model', api_key='placeholder')
+    result = QwenClient(cfg, httpx.MockTransport(handler)).complete([], time.monotonic() + 2)
+    assert result['status'] == 'insufficient_data'
