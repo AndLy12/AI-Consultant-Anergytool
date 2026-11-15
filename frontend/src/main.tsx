@@ -2,6 +2,8 @@
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import App from './App'
+// tokens.css первым: в нём шрифты и дизайн-переменные, которыми пользуется styles.css.
+import './tokens.css'
 import './styles.css'
 
 const container = document.getElementById('root')

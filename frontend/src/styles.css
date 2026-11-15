@@ -1,26 +1,31 @@
 /*
- * Оформление интерфейса. Мини-набор стилей вместо UI-фреймворка:
- * один акцентный цвет, один шрифт, один радиус скругления.
- * Светлый фон и красный акцент повторяют узнаваемый стиль МТС.
- * Внешние шрифты не подключаем: CSP backend разрешает только свои файлы.
+ * Оформление интерфейса без UI-фреймворка.
+ * Все цвета, шрифты, размеры и скругления берутся из tokens.css
+ * (значения из макета Figma, см. docs/design/DESIGN_SPEC.md).
+ * В этом файле значения напрямую не пишем — только var(--...).
  */
 
 :root {
-  --bg: #f1f2f7;
-  --surface: #ffffff;
-  --surface-muted: #f7f8fc;
-  --text: #16181d;
-  --text-muted: #5c6270;
-  --line: #e2e4ee;
-  --accent: #e30611;
-  --accent-dark: #b80510;
-  --accent-soft: #fdecec;
-  --ok: #1f8a53;
-  --warn: #b26a00;
-  --radius: 14px;
-  --radius-sm: 10px;
-  --shadow: 0 1px 2px rgba(22, 24, 29, 0.06), 0 8px 24px rgba(22, 24, 29, 0.05);
-  --font: 'Segoe UI', system-ui, -apple-system, 'Helvetica Neue', Arial, sans-serif;
+  /*
+   * Короткие имена, которыми пользуются правила ниже. Сами значения
+   * живут в tokens.css (единый источник из макета Figma); здесь только
+   * ссылки на них, поэтому новых чисел и цветов в этом блоке не появляется.
+   */
+  --bg: var(--color-page);
+  --surface: var(--color-white);
+  --surface-muted: var(--color-page);
+  --text: var(--color-text);
+  --text-muted: var(--color-text-muted);
+  --line: var(--color-line);
+  --accent: var(--color-red);
+  --accent-dark: var(--color-red-dark);
+  --accent-soft: var(--color-red-soft);
+  --ok: var(--color-ok);
+  --warn: var(--color-warn);
+  --radius: var(--radius-control);
+  --radius-sm: var(--radius-bubble);
+  --shadow: var(--shadow-panel);
+  --font: var(--font-text);
 }
 
 * {
@@ -39,19 +44,25 @@ body {
   color: var(--text);
   font-family: var(--font);
   font-size: 15px;
-  line-height: 1.5;
+  /* В Figma у текстовых слоёв межстрочный интервал «Авто» = normal. */
+  line-height: var(--lh-normal);
 }
 
+/*
+ * Заголовки в макете набраны MTS Wide (приветствие, «Форма заявки»,
+ * заголовки входа), а не основным MTS Text. Разрядка в Figma 0.
+ */
 h1,
 h2 {
   margin: 0;
-  font-weight: 650;
-  letter-spacing: -0.01em;
+  font-family: var(--font-wide);
+  font-weight: var(--weight-bold);
+  letter-spacing: 0;
 }
 
 /* Видимый фокус обязателен: интерфейс должен работать с клавиатуры. */
 :focus-visible {
-  outline: 2px solid var(--accent);
+  outline: 2px solid var(--color-focus);
   outline-offset: 2px;
 }
 
@@ -59,7 +70,7 @@ h2 {
 
 .button {
   font: inherit;
-  font-weight: 600;
+  font-weight: var(--weight-bold);
   border-radius: var(--radius-sm);
   border: 1px solid transparent;
   padding: 9px 16px;
@@ -74,7 +85,7 @@ h2 {
 
 .button-primary {
   background: var(--accent);
-  color: #fff;
+  color: var(--color-white);
 }
 
 .button-primary:hover:not(:disabled) {
@@ -114,7 +125,7 @@ h2 {
 
 .field-label {
   font-size: 13px;
-  font-weight: 600;
+  font-weight: var(--weight-bold);
   color: var(--text-muted);
 }
 
@@ -149,7 +160,7 @@ h2 {
 
 .field-error {
   font-size: 12px;
-  font-weight: 600;
+  font-weight: var(--weight-bold);
   color: var(--accent-dark);
 }
 
@@ -177,19 +188,19 @@ h2 {
 .badge {
   display: inline-block;
   font-size: 12px;
-  font-weight: 600;
+  font-weight: var(--weight-bold);
   padding: 3px 9px;
   border-radius: 999px;
 }
 
 .badge-test {
-  background: #fff4e0;
+  background: var(--color-warn-bg);
   color: var(--warn);
 }
 
 .chip {
   font-size: 12px;
-  font-weight: 600;
+  font-weight: var(--weight-bold);
   padding: 2px 9px;
   border-radius: 999px;
   background: var(--surface-muted);
@@ -199,15 +210,15 @@ h2 {
 }
 
 .chip-active {
-  background: #e8f6ee;
+  background: var(--color-ok-bg);
   color: var(--ok);
-  border-color: #c7e8d6;
+  border-color: var(--color-ok-border);
 }
 
 .chip-done {
-  background: #e8f6ee;
+  background: var(--color-ok-bg);
   color: var(--ok);
-  border-color: #c7e8d6;
+  border-color: var(--color-ok-border);
 }
 
 .empty {
@@ -233,7 +244,7 @@ h2 {
 
 .tab {
   font: inherit;
-  font-weight: 600;
+  font-weight: var(--weight-bold);
   flex: 1;
   border: none;
   background: transparent;
@@ -246,7 +257,7 @@ h2 {
 .tab-active {
   background: var(--surface);
   color: var(--text);
-  box-shadow: 0 1px 2px rgba(22, 24, 29, 0.08);
+  box-shadow: var(--shadow-soft);
 }
 
 /* ---------- Вход ---------- */
@@ -265,9 +276,12 @@ h2 {
   display: inline-block;
 }
 
+/* «Energytool» в макете: MTS Wide Bold, чёрный, разрядка 0 (кадр 9:2, слой 18:421). */
 .brand-name {
-  font-weight: 700;
-  letter-spacing: -0.02em;
+  font-family: var(--font-wide);
+  font-weight: var(--weight-bold);
+  color: var(--color-black);
+  letter-spacing: 0;
 }
 
 .auth {
@@ -288,8 +302,12 @@ h2 {
   gap: 16px;
 }
 
+/* Заголовок входа/регистрации в макете — MTS Wide Medium, интервал 84.82% (слои 15:122, 15:139).
+ * Размер 32px и расположение приводятся к макету на этапе 2 вместе с разметкой экрана. */
 .auth-title {
   font-size: 22px;
+  font-weight: var(--weight-medium);
+  line-height: var(--lh-title-auth);
 }
 
 .auth-lead,
@@ -330,7 +348,7 @@ h2 {
 
 .nav-item {
   font: inherit;
-  font-weight: 600;
+  font-weight: var(--weight-bold);
   border: none;
   background: transparent;
   color: var(--text-muted);
@@ -410,7 +428,7 @@ h2 {
 
 .chat-side-title {
   margin: 0;
-  font-weight: 650;
+  font-weight: var(--weight-bold);
 }
 
 .chat-side-text {
@@ -477,10 +495,10 @@ h2 {
   height: 30px;
   border-radius: 9px;
   background: var(--accent);
-  color: #fff;
+  color: var(--color-white);
   display: grid;
   place-items: center;
-  font-weight: 700;
+  font-weight: var(--weight-bold);
   font-size: 14px;
   flex: none;
 }
@@ -497,7 +515,7 @@ h2 {
 
 .bubble-user {
   background: var(--accent);
-  color: #fff;
+  color: var(--color-white);
   border-bottom-right-radius: 4px;
 }
 
@@ -513,7 +531,7 @@ h2 {
 
 .bubble-error {
   background: var(--accent-soft);
-  border: 1px solid #f6c9c9;
+  border: 1px solid var(--color-error-border-soft);
   border-bottom-left-radius: 4px;
   display: grid;
   gap: 8px;
@@ -529,9 +547,9 @@ h2 {
 .bubble-label {
   margin: 0 0 4px;
   font-size: 12px;
-  font-weight: 700;
+  font-weight: var(--weight-bold);
   text-transform: uppercase;
-  letter-spacing: 0.03em;
+  letter-spacing: var(--ls-label);
   color: var(--warn);
 }
 
@@ -549,7 +567,7 @@ h2 {
 
 .missing {
   margin-top: 10px;
-  background: #fff6e6;
+  background: var(--color-warn-bg-soft);
   border-radius: var(--radius-sm);
   padding: 9px 12px;
   font-size: 14px;
@@ -557,7 +575,7 @@ h2 {
 
 .missing-title {
   margin: 0 0 4px;
-  font-weight: 600;
+  font-weight: var(--weight-bold);
 }
 
 .missing ul {
@@ -657,7 +675,7 @@ h2 {
 
 .sources summary {
   cursor: pointer;
-  font-weight: 600;
+  font-weight: var(--weight-bold);
   color: var(--text-muted);
 }
 
@@ -670,7 +688,7 @@ h2 {
 
 .source-title {
   margin: 0;
-  font-weight: 600;
+  font-weight: var(--weight-bold);
 }
 
 .source-meta {
@@ -691,7 +709,7 @@ h2 {
 
 .debug {
   margin-top: 10px;
-  background: #eef0f8;
+  background: var(--color-code-bg);
   border: 1px solid var(--line);
   border-radius: var(--radius-sm);
   padding: 10px 12px;
@@ -700,10 +718,10 @@ h2 {
 
 .debug-title {
   margin: 0 0 8px;
-  font-weight: 700;
+  font-weight: var(--weight-bold);
   font-size: 12px;
   text-transform: uppercase;
-  letter-spacing: 0.04em;
+  letter-spacing: var(--ls-divider);
   color: var(--text-muted);
 }
 
@@ -718,16 +736,16 @@ h2 {
   font-size: 11px;
   color: var(--text-muted);
   text-transform: uppercase;
-  letter-spacing: 0.03em;
+  letter-spacing: var(--ls-label);
 }
 
 .debug-grid dd {
   margin: 0;
-  font-weight: 600;
+  font-weight: var(--weight-bold);
 }
 
 .debug-id {
-  font-family: ui-monospace, 'Cascadia Mono', Consolas, monospace;
+  font-family: var(--font-mono);
   font-size: 11px;
   overflow-wrap: anywhere;
 }
@@ -738,7 +756,7 @@ h2 {
 
 .debug-group-title {
   margin: 0 0 4px;
-  font-weight: 600;
+  font-weight: var(--weight-bold);
 }
 
 .debug-plain {
@@ -754,7 +772,7 @@ h2 {
 }
 
 .debug-chunk-title {
-  font-weight: 600;
+  font-weight: var(--weight-bold);
   margin-right: 8px;
 }
 
@@ -930,7 +948,7 @@ h2 {
 }
 
 .lead-id {
-  font-family: ui-monospace, 'Cascadia Mono', Consolas, monospace;
+  font-family: var(--font-mono);
   background: var(--surface-muted);
   padding: 2px 7px;
   border-radius: 6px;
@@ -1003,7 +1021,7 @@ h2 {
 }
 
 .archive-date {
-  font-weight: 600;
+  font-weight: var(--weight-bold);
   white-space: nowrap;
 }
 
@@ -1046,7 +1064,7 @@ h2 {
 }
 
 .staff-application-id {
-  font-family: ui-monospace, 'Cascadia Mono', Consolas, monospace;
+  font-family: var(--font-mono);
 }
 
 /* ---------- Модальное окно ---------- */
@@ -1054,7 +1072,7 @@ h2 {
 .modal-backdrop {
   position: fixed;
   inset: 0;
-  background: rgba(22, 24, 29, 0.45);
+  background: var(--overlay-strong);
   display: grid;
   place-items: center;
   padding: 16px;
