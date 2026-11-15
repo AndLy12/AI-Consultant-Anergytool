@@ -80,14 +80,18 @@ def _topic_events(text: str):
             found.append(('облачная платформа', re.search(r'един\w*\s+кабинет', clause, re.I)))
         # Отрицательный вопрос о необходимости ещё не является отказом:
         # иначе для ответа «станция нам не нужна?» исчезнут солнечные источники.
-        refusal = bool(not questioned and (REFUSAL.search(clause) or EXCLUDED.search(clause))
+        # Отказ от покупки/установки продукта отличается от отрицательного
+        # свойства «SIM менять не нужно». Последнее не исключает платформу.
+        acquisition_refusal = bool(re.search(
+            r'\bне\s+(?:хот\w*|планиру\w*|буд\w*)\s+(?:устанавливать|покупать|подключать)\b', clause, re.I))
+        refusal = bool(not questioned and (REFUSAL.search(clause) or EXCLUDED.search(clause) or acquisition_refusal)
                        and not DOUBLE_NEGATION.search(clause)
-                       and not PROPERTY_ACTION.search(clause))
+                       and (acquisition_refusal or not PROPERTY_ACTION.search(clause)))
         for title, match in sorted((item for item in found if item[1]), key=lambda item: item[1].start()):
             prefix = clause[:match.start()]
             # «Не только X» не равно «не X». Простое «не X, а Y» обрабатывается
             # до BM25; удаление всех предложений со словом «не» потеряло бы свойства.
-            direct = bool(re.search(r'\b(?:не|без)\s+$', prefix, re.I))
+            direct = bool(not questioned and re.search(r'\b(?:не|без)\s+$', prefix, re.I))
             yield title, not (refusal or direct), clause.strip()
 
 
@@ -230,6 +234,13 @@ _NAMED_POWER = re.compile(
     r'(?:имеет\s+|[—:-]\s*)?(?:(?:поправка|исправляю|уточняю):\s*)?'
     r'\d+(?:[.,]\d+)?\s*(?:кВт|МВт)', re.I)
 
+# Только самостоятельное утверждение: не удаляем предложение с прочими
+# фактами, если невозможно отделить старую мощность без потери его смысла.
+_OBJECT_POWER = re.compile(
+    r'(?:(?:поправка|исправляю|уточняю)[:\s]+)?(?:у\s+нас\s+)?'
+    r'(?:мощность\s+)?(?P<object>склад|офис|завод|магазин)(?:а)?'
+    r'\s+(?:мощност(?:ь|ью)\s+)?\d+(?:[.,]\d+)?\s*(?:кВт|МВт)', re.I)
+
 
 def _current_card_messages(texts, active):
     """Убираем только однозначно заменённые выдержки до разбора остальных поправок."""
@@ -249,6 +260,13 @@ def _current_card_messages(texts, active):
             if named:
                 key = ('named', named['label'].lower())
                 if key in latest and re.search(r'поправка|исправляю|уточняю', clean, re.I):
+                    old_turn, old_span = latest[key]
+                    removed[old_turn].add(old_span)
+                latest[key] = (turn, span.span())
+            scoped = _OBJECT_POWER.fullmatch(clean)
+            if scoped:
+                key = ('object', scoped['object'].lower())
+                if key in latest and re.match(r'поправка|исправляю|уточняю', clean, re.I):
                     old_turn, old_span = latest[key]
                     removed[old_turn].add(old_span)
                 latest[key] = (turn, span.span())
@@ -290,6 +308,13 @@ def summary_excerpts(texts: list[str], excluded: tuple[str, ...] = (), active: t
         correction.search(text)
         and re.search(r'перв\w*|втор\w*|друг\w*|одн\w*\s+из', text, re.I))
         for text in texts)
+    # «Склад» и «офис» также обозначают разные объекты без номеров. Для
+    # них общий слот мощности небезопасен; точные замены обработаны выше,
+    # неоднозначные остаются в исходной хронологии для подтверждения.
+    separate_objects = separate_objects or len({
+        match.group(1).lower() for text in texts
+        for match in re.finditer(r'\b(склад|офис|завод|магазин)\w*', text, re.I)
+    }) > 1
     # Не начинаем число с середины другого числа. Без этой границы длинная
     # последовательность цифр без единицы проверялась со всех позиций
     # и давала квадратичное время разбора допустимого входного сообщения.

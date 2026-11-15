@@ -440,3 +440,21 @@ def test_negative_product_question_is_not_client_refusal(question, index):
     intent = search_intent(CoreRequest(message=question))
     assert 'солнечные электростанции' not in intent.excluded
     assert any('Солнечные' in h.chunk.title for h in index.search_request(CoreRequest(message=question)))
+@pytest.mark.parametrize('phrase', [
+    'Не хотим устанавливать солнечные панели.',
+    'Не планируем покупать солнечные панели.',
+])
+def test_acquisition_refusal_excludes_product(phrase):
+    """Отказ от приобретения не становится вопросом об обслуживании."""
+    intent = search_intent(CoreRequest(message=phrase))
+    assert 'солнечные электростанции' in intent.excluded
+    assert 'солнечные электростанции' not in intent.active
+
+
+def test_without_product_question_preserves_sources():
+    """Условный вопрос без панелей требует солнечных источников для ответа."""
+    intent = search_intent(CoreRequest(message='Без солнечных панелей станция будет работать?'))
+    assert 'солнечные электростанции' in intent.active
+    assert not intent.excluded
+
+

@@ -429,3 +429,15 @@ def test_number_scan_optimization_preserves_valid_power_corrections(value):
     draft = assemble({'status': 'insufficient_data'}, (), request).summary_draft
     assert value + ' кВт' in draft
     assert '600' not in draft
+def test_power_correction_keeps_other_object_without_number():
+    """Явная поправка склада не стирает мощность отдельно названного офиса."""
+    from core.dialogue import summary_excerpts
+    text = '\n'.join(summary_excerpts([
+        'Склад 600 кВт. Офис 100 кВт.',
+        'Исправляю: мощность склада 900 кВт. Подготовь резюме.',
+    ]))
+    assert 'Офис 100 кВт' in text
+    assert '900 кВт' in text
+    assert '600 кВт' not in text
+
+
