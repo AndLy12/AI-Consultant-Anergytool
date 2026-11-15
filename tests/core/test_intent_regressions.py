@@ -372,3 +372,38 @@ def test_second_required_table_is_completed_before_generic_guards(budget):
     assert len({c.chunk_id for c in context}) == len(context)
     if budget == 2000:
         assert any(c.section == 'Ограничения' for c in context)
+
+
+def test_excluded_guards_do_not_spend_engine_context_budget(tmp_path):
+    """Исключённый продукт не вытесняет условия выбранного продукта до фильтрации."""
+    chunks = make_chunks('shared.md', [('# Общая инструкция\n\n## Экспорт\n\n'
+        'Выгрузка CSV доступна.\n\n## Ограничения солнечные электростанции\n\n'
+        + 'Панели требуют осмотра. ' * 80
+        + '\n\n## Ограничения платформы\n\n'
+        + 'Экспорт требует согласования оператора. ' * 8, None, None)], 3000)
+
+    class Client:
+        def complete(self, messages, deadline):
+            documents = json.loads(messages[-1]['content'])['documents']
+            texts = ' '.join(doc['text'] for doc in documents)
+            assert 'согласования оператора' in texts
+            assert 'Панели требуют' not in texts
+            return {'status': 'answered', 'answer': 'Выгрузка требует согласования.', 'evidence': ['D1']}
+
+    cfg = Settings(tmp_path, base_url='http://unit.test/v1', model='model', api_key='placeholder',
+                   top_k=1, context_chars=2000, review_answers=False)
+    result = EnergytoolCore(cfg, chunks=chunks, client=Client()).respond(
+        CoreRequest(message='Панели не нужны, нужен учёт. Есть выгрузка CSV?'))
+    assert result.core_status == 'answered'
+
+
+def test_cached_product_labels_do_not_keep_previous_client_exclusions():
+    """Общий индекс хранит метки базы, исключения остаются в текущем запросе."""
+    chunks = make_chunks('solar.md', [('# Солнечные электростанции\n\n'
+        '## Ограничения\n\nСетевая станция зависит от внешней сети.', None, None)], 1800)
+    index = SearchIndex(tuple(chunks))
+    excluded = search_intent(CoreRequest(message='Панели не нужны, нужен учёт.'))
+    included = search_intent(CoreRequest(message='Нужна солнечная станция.'))
+    assert not index.allowed(chunks[0], excluded)
+    assert index.allowed(chunks[0], included)
+    assert not index.allowed(chunks[0], excluded)

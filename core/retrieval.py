@@ -128,6 +128,12 @@ class SearchIndex:
         self.section_sets = tuple(frozenset(row) for row in section_tokens)
         self.section_bm25 = BM25Plus([row or ['__empty__'] for row in section_tokens]) if self.sections else None
         self.positions = {chunk.chunk_id: i for i, chunk in enumerate(self.chunks)}
+        # Принадлежность раздела продукту зависит только от заголовков базы.
+        # Считаем её один раз; намерения и исключения клиента здесь не храним.
+        self.product_links = {
+            (c.title, c.section_path or (c.section,)): self._product_links(c)
+            for c in self.chunks
+        }
 
     def search(self, query: str, top_k=5) -> tuple[Hit, ...]:
         words = tokens(query)
@@ -146,8 +152,8 @@ class SearchIndex:
         return tuple(candidates[:top_k])
 
     @staticmethod
-    def allowed(chunk, intent):
-        """Сохраняем выбранные продукты и общие основания, отсекая чужие продуктовые разделы."""
+    def _product_links(chunk):
+        """Получаем продуктовые метки из заголовков неизменяемого источника."""
         linked = {title for _, title in TOPICS if title in chunk.title.lower()}
         path = chunk.section_path or (chunk.section,)
         # В справочнике границ продукт задан заголовком раздела, тогда как
@@ -156,6 +162,15 @@ class SearchIndex:
                       if any(title in (part or '').lower() for part in path))
         linked.update(title for title, heading in PREPARATION_SECTIONS.items()
                       if any((part or '').lower() == heading for part in path))
+        return frozenset(linked)
+
+    def allowed(self, chunk, intent):
+        """Проверяем текущий запрос по заранее вычисленным меткам раздела."""
+        key = (chunk.title, chunk.section_path or (chunk.section,))
+        linked = self.product_links.get(key)
+        if linked is None:
+            # Инструмент проверки может добавить фрагмент, которого нет в базе.
+            linked = self._product_links(chunk)
         return not linked.intersection(intent.excluded) and (
             not intent.active or not linked or bool(linked.intersection(intent.active)))
 
