@@ -182,6 +182,7 @@ def test_reviewer_schema_requires_result(tmp_path):
         schema = json.loads(request.content)['response_format']['json_schema']['schema']
         assert schema['required'] == ['issues', 'follow_up_question', 'result']
         assert 'ModelSelection' in schema['$defs']
+        assert schema['$defs']['ModelSelection']['properties']['evidence']['maxItems'] == 3
         return httpx.Response(200, json={'choices': [{'message': {'content':
             '{"issues":[],"result":{"status":"insufficient_data"}}'}}]})
     cfg = Settings(tmp_path, base_url='http://unit.test/v1', model='model', api_key='placeholder', retries=0)
@@ -495,6 +496,7 @@ def test_generation_wire_schema_requires_answer_evidence_and_specific_question(t
         assert set(branches) == {'answered', 'clarification_needed', 'insufficient_data', 'out_of_scope'}
         assert set(branches['answered']['required']) == {'status', 'answer', 'evidence'}
         assert branches['answered']['properties']['evidence']['minItems'] == 1
+        assert branches['answered']['properties']['evidence']['maxItems'] == 3
         assert branches['clarification_needed']['properties']['evidence']['maxItems'] == 0
         assert 'question' in branches['clarification_needed']['required']
         assert branches['insufficient_data']['properties']['question'] == {'type': 'null'}

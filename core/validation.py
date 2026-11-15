@@ -78,7 +78,11 @@ class ModelSelection(BaseModel):
     missing_information: list[str] = Field(default_factory=list, max_length=10)
     summary_draft: str | None = Field(default=None, max_length=3000)
 
-    @field_validator('evidence', mode='before', json_schema_input_type=list[Evidence | str])
+    # При подмене входного типа для коротких ID Pydantic не переносит Field
+    # из основного объявления в JSON Schema. Без ограничения здесь провайдер
+    # возвращал четыре источника, а assemble отклонял результат review.
+    @field_validator('evidence', mode='before',
+                     json_schema_input_type=Annotated[list[Evidence | str], Field(max_length=3)])
     @classmethod
     def parse_source_ids(cls, values):
         """Короткий ID ссылается на тот же фрагмент, что и объект с chunk_id."""
