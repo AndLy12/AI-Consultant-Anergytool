@@ -30,7 +30,9 @@ await page.getByRole('button', { name: 'Отправить', exact: true }).clic
 await page.waitForFunction(() => document.querySelectorAll('.row-bot').length >= 2, null, { timeout: 30000 })
 run.step('второе сообщение учтено в том же диалоге', true)
 
-await page.getByText('Отладка', { exact: true }).click()
+// Переключатель отладки — кнопка «Режим отладки» в колонке (макет 18:429); при включении
+// блок отладки под ответом раскрывается сразу, как в кадре 19:488.
+await page.getByRole('button', { name: 'Режим отладки' }).click()
 await page.waitForSelector('.debug', { timeout: 5000 })
 const debugText = await page.locator('.debug').first().textContent()
 run.step('отладка показывает время ответа', debugText.includes('Время ответа'))
@@ -90,7 +92,10 @@ run.step('после просмотра архива активный диало
 
 await page.reload()
 await page.waitForSelector('.chat', { timeout: 15000 })
-run.step('сессия и режим отладки пережили перезагрузку', await page.locator('.switch input').isChecked())
+run.step(
+  'сессия и режим отладки пережили перезагрузку',
+  (await page.getByRole('button', { name: 'Режим отладки' }).getAttribute('aria-pressed')) === 'true',
+)
 
 await page.setViewportSize({ width: 390, height: 844 })
 await page.waitForTimeout(400)

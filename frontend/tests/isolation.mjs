@@ -57,7 +57,8 @@ run.step('заявка создана', firstId.length > 10)
 
 // Повторное открытие карточки показывает ту же заявку, а не новую.
 await pageA.getByRole('button', { name: 'Свернуть' }).click()
-await pageA.getByRole('button', { name: 'Моя заявка' }).click()
+// Панели над чатом нет: созданную заявку показывает та же кнопка колонки «Оставить заявку».
+await pageA.getByRole('button', { name: 'Оставить заявку', exact: true }).click()
 await pageA.waitForSelector('.lead-done')
 const repeatedId = await pageA.locator('.lead-id').textContent()
 run.step('повторный заход показывает ту же заявку', repeatedId === firstId, repeatedId)

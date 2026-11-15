@@ -3,36 +3,36 @@
  *
  * Просмотр архива не меняет активный диалог: backend по GET /api/dialogs/{id}
  * ничего не переключает, а интерфейс открывает запись только для чтения.
+ * Первую реплику и число сообщений дочитывает lib/dialogRows (у backend нет превью).
  *
- * В списке диалогов backend не отдаёт название и превью, поэтому первую реплику и
- * число сообщений дочитываем отдельными запросами. Для прототипа объём небольшой;
- * поле preview запрошено у роли №1, чтобы убрать эти дополнительные обращения.
+ * Экран открывается двумя путями: заголовком «История чатов» в колонке — со списком,
+ * или пунктом истории — сразу с нужным диалогом (prop openId).
  */
 
 import { useCallback, useEffect, useState } from 'react'
 import { ApiError, api } from '../api/client'
-import type { Application, Dialog, DialogWithMessages } from '../api/types'
+import type { Application, DialogWithMessages } from '../api/types'
+import { loadDialogRows } from '../lib/dialogRows'
+import type { DialogRow } from '../lib/dialogRows'
 import { describeError } from '../lib/errors'
 import { formatDateTime } from '../lib/format'
 import MessageBubble from './MessageBubble'
 
 type Props = {
   debug: boolean
+  /** Диалог, который нужно сразу открыть для чтения (клик по пункту истории в колонке). */
+  openId?: string
   onBack: () => void
+  /** Сообщает колонке, какой диалог открыт, чтобы подсветить его в истории. */
+  onOpened?: (id: string | null) => void
   onSessionExpired: () => void
-}
-
-type Row = {
-  dialog: Dialog
-  preview: string
-  count: number
 }
 
 /** Сколько диалогов дочитываем ради превью, чтобы не делать сотни запросов. */
 const PREVIEW_LIMIT = 50
 
-export default function ArchiveScreen({ debug, onBack, onSessionExpired }: Props) {
-  const [rows, setRows] = useState<Row[]>([])
+export default function ArchiveScreen({ debug, openId, onBack, onOpened, onSessionExpired }: Props) {
+  const [rows, setRows] = useState<DialogRow[]>([])
   const [opened, setOpened] = useState<DialogWithMessages | null>(null)
   const [card, setCard] = useState<Application | null>(null)
   const [loading, setLoading] = useState(true)
@@ -53,22 +53,8 @@ export default function ArchiveScreen({ debug, onBack, onSessionExpired }: Props
     let cancelled = false
     async function load() {
       try {
-        const dialogs = await api.listDialogs()
-        // Новые сверху: backend отдаёт список от старых к новым.
-        const ordered = [...dialogs].reverse()
-        const detailed = await Promise.all(
-          ordered.slice(0, PREVIEW_LIMIT).map(async (dialog) => {
-            try {
-              const full = await api.getDialog(dialog.id)
-              const first = full.messages.find((message) => message.role === 'user')
-              return { dialog, preview: first?.content ?? '', count: full.messages.length }
-            } catch {
-              return { dialog, preview: '', count: 0 }
-            }
-          }),
-        )
-        const rest = ordered.slice(PREVIEW_LIMIT).map((dialog) => ({ dialog, preview: '', count: 0 }))
-        if (!cancelled) setRows([...detailed, ...rest])
+        const loaded = await loadDialogRows(PREVIEW_LIMIT)
+        if (!cancelled) setRows(loaded)
       } catch (caught) {
         if (!cancelled) handleFailure(caught)
       } finally {
@@ -81,20 +67,33 @@ export default function ArchiveScreen({ debug, onBack, onSessionExpired }: Props
     }
   }, [handleFailure])
 
-  async function open(id: string) {
-    setError('')
-    try {
-      setOpened(await api.getDialog(id))
+  const open = useCallback(
+    async (id: string) => {
+      setError('')
       try {
-        setCard(await api.getApplication(id))
+        setOpened(await api.getDialog(id))
+        try {
+          setCard(await api.getApplication(id))
+        } catch (caught) {
+          if (caught instanceof ApiError && caught.status === 404) setCard(null)
+          else throw caught
+        }
       } catch (caught) {
-        if (caught instanceof ApiError && caught.status === 404) setCard(null)
-        else throw caught
+        handleFailure(caught)
       }
-    } catch (caught) {
-      handleFailure(caught)
-    }
-  }
+    },
+    [handleFailure],
+  )
+
+  // Пункт истории в колонке открывает диалог сразу, минуя список.
+  useEffect(() => {
+    if (openId) void open(openId)
+  }, [openId, open])
+
+  // Подсветка в колонке: открытый диалог или ничего, пока показан список.
+  useEffect(() => {
+    onOpened?.(opened?.id ?? null)
+  }, [opened, onOpened])
 
   if (opened) {
     return (

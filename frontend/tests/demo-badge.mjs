@@ -16,7 +16,8 @@ const page = await browser.newPage({ viewport: { width: 1280, height: 900 } })
 run.watch(page)
 
 const authBadge = page.locator('.auth-card .badge-demo')
-const headerBadge = page.locator('.app-header .badge-demo')
+// Шапки больше нет (макет Figma 9:2): плашки режимов стоят в левой колонке под «Energytool».
+const headerBadge = page.locator('.sidebar .badge-demo')
 
 /** Подменяет ответ /health; null — снять подмену и отдать настоящий ответ. */
 async function fakeHealth(body) {
@@ -41,7 +42,7 @@ run.step(
 await registerFresh(page, 'demo.badge')
 await page.waitForTimeout(500)
 run.step(
-  'шапка: плашка соответствует настоящему /health',
+  'колонка: плашка соответствует настоящему /health',
   (await headerBadge.count()) === (realDemo ? 1 : 0),
 )
 
@@ -50,10 +51,10 @@ await fakeHealth({ status: 'ok', core_mode: 'real', core_demo: true, core_ready:
 await page.reload()
 await page.waitForSelector('.chat', { timeout: 15000 })
 await headerBadge.waitFor({ timeout: 5000 }).catch(() => undefined)
-run.step('core_demo=true: в шапке плашка «Демо-режим»', (await headerBadge.textContent())?.trim() === 'Демо-режим')
+run.step('core_demo=true: в колонке плашка «Демо-режим»', (await headerBadge.textContent())?.trim() === 'Демо-режим')
 run.step(
   'core_demo=true: плашка «тестовый режим» не показана (core_mode=real)',
-  (await page.locator('.app-header').textContent()).includes('тестовый режим') === false,
+  (await page.locator('.sidebar').textContent()).includes('тестовый режим') === false,
 )
 const badgeBox = await headerBadge.boundingBox()
 run.step('плашка маленькая, не шире 160px', badgeBox !== null && badgeBox.width <= 160)
@@ -61,7 +62,8 @@ await run.shot(page, '24-demo-badge')
 
 await page.setViewportSize({ width: 390, height: 844 })
 await page.waitForTimeout(300)
-run.step('на узком экране плашка видна', await headerBadge.isVisible())
+// На узком экране колонка спрятана за меню; плашка дублируется в верхней полосе.
+run.step('на узком экране плашка видна', await page.locator('.mobile-bar .badge-demo').isVisible())
 const overflow = await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth + 1)
 run.step('на узком экране нет горизонтальной прокрутки', !overflow)
 await page.setViewportSize({ width: 1280, height: 900 })

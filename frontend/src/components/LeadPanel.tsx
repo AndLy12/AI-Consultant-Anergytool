@@ -188,24 +188,8 @@ export default function LeadPanel({
 
   if (stage === 'hidden') return null
 
-  if (stage === 'offer') {
-    return (
-      <section className="lead lead-offer" aria-label="Предложение оставить заявку">
-        <p className="lead-offer-text">
-          Передать задачу менеджеру Energytool? Понадобятся ФИО, телефон и компания.
-          Консультация останется доступной в любом случае.
-        </p>
-        <div className="lead-actions">
-          <button type="button" className="button button-primary" onClick={() => onStage('form')}>
-            Оставить заявку
-          </button>
-          <button type="button" className="button button-ghost" onClick={() => onStage('hidden')}>
-            Продолжить консультацию
-          </button>
-        </div>
-      </section>
-    )
-  }
+  // Предложение заявки (stage 'offer') рисует лента чата по макету 20:712, не эта панель.
+  if (stage === 'offer') return null
 
   if (stage === 'form') {
     /** Общие атрибуты поля: красная рамка и связь подсказки с полем для скринридера. */
