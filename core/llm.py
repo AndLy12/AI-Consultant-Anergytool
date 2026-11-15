@@ -5,7 +5,7 @@ import json
 import time
 import httpx
 from core_contract import CoreUnavailable, ModelResponseError, ProviderError
-from core.validation import AnswerReview, generation_schema
+from core.validation import generation_schema, review_schema
 
 MAX_RESPONSE_BYTES = 256 * 1024
 
@@ -73,7 +73,7 @@ class QwenClient:
 
     def review(self, messages, deadline):
         """Схема обязательного результата не позволяет закончить ответ одними замечаниями."""
-        return self.complete(messages, deadline, response_schema=AnswerReview.model_json_schema())
+        return self.complete(messages, deadline, response_schema=review_schema())
 
     async def _bounded(self, messages, remaining, response_schema=None):
         """Один таймаут охватывает подключение, чтение всех порций и повторы."""
