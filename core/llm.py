@@ -4,8 +4,9 @@ import asyncio
 import json
 import time
 import httpx
+from pydantic import ValidationError
 from core_contract import CoreUnavailable, ModelResponseError, ProviderError
-from core.validation import generation_schema, review_schema
+from core.validation import AnswerReview, generation_schema, review_schema
 
 MAX_RESPONSE_BYTES = 256 * 1024
 
@@ -73,7 +74,18 @@ class QwenClient:
 
     def review(self, messages, deadline):
         """Схема обязательного результата не позволяет закончить ответ одними замечаниями."""
-        return self.complete(messages, deadline, response_schema=review_schema())
+        result = self.complete(messages, deadline, response_schema=review_schema())
+        try:
+            # Совместимый сервер может игнорировать JSON Schema или поддерживать
+            # только json_object. Проверяем весь отчёт локально: иначе отсутствие
+            # issues принималось за исправление и могло затереть готовый ответ.
+            # Источники дополнительно проверяет assemble в контексте запроса.
+            AnswerReview.model_validate(result)
+        except ValidationError:
+            # Текст ошибки Pydantic содержит исходные значения: не раскрываем
+            # ответ модели или секреты в диагностике технического сбоя.
+            raise ModelResponseError('Проверка модели вернула некорректный отчёт') from None
+        return result
 
     async def _bounded(self, messages, remaining, response_schema=None):
         """Один таймаут охватывает подключение, чтение всех порций и повторы."""

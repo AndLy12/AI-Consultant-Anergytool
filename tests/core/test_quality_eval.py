@@ -189,7 +189,7 @@ def test_reviewer_schema_requires_result(tmp_path):
         assert 'answer' in branches['answered']['required']
         assert 'question' in branches['clarification_needed']['required']
         return httpx.Response(200, json={'choices': [{'message': {'content':
-            '{"issues":[],"result":{"status":"insufficient_data"}}'}}]})
+            '{"issues":[],"follow_up_question":null,"result":{"status":"insufficient_data"}}'}}]})
     cfg = Settings(tmp_path, base_url='http://unit.test/v1', model='model', api_key='placeholder', retries=0)
     result = QwenClient(cfg, httpx.MockTransport(handler)).review([], time.monotonic() + 2)
     assert result['result']['status'] == 'insufficient_data'
@@ -512,3 +512,22 @@ def test_generation_wire_schema_requires_answer_evidence_and_specific_question(t
     cfg = Settings(tmp_path, base_url='http://unit.test/v1', model='model', api_key='placeholder')
     result = QwenClient(cfg, httpx.MockTransport(handler)).complete([], time.monotonic() + 2)
     assert result['status'] == 'insufficient_data'
+
+
+@pytest.mark.parametrize('review', [
+    {'result': {'status': 'insufficient_data'}},
+    {'issues': 'Ошибок нет', 'follow_up_question': None, 'result': {'status': 'insufficient_data'}},
+    {'issues': [123], 'follow_up_question': None, 'result': {'status': 'insufficient_data'}},
+    {'issues': [], 'follow_up_question': ' ', 'result': {'status': 'insufficient_data'}},
+    {'issues': [], 'follow_up_question': None, 'result': {'status': 'insufficient_data'}, 'extra': True},
+])
+def test_reviewer_rejects_invalid_envelope_without_exposing_content(tmp_path, review):
+    """Прокси без JSON Schema не должен превращать некорректный review в успех."""
+    def handler(request):
+        return httpx.Response(200, json={'choices': [{'message': {'content': json.dumps(review)}}]})
+
+    cfg = Settings(tmp_path, base_url='http://unit.test/v1', model='model', api_key='placeholder', retries=0)
+    with pytest.raises(ModelResponseError) as error:
+        QwenClient(cfg, httpx.MockTransport(handler)).review([], time.monotonic() + 2)
+    assert 'Ошибок нет' not in str(error.value)
+    assert 'placeholder' not in str(error.value)

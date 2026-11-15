@@ -3,11 +3,14 @@
 import logging
 import json
 
+import httpx
+
 import pytest
 
 from core.config import Settings
 from core.documents import make_chunks
 from core.engine import EnergytoolCore
+from core.llm import QwenClient
 from core.prompts import build_messages, build_review_messages
 from core.validation import assemble
 from core_contract import CoreRequest, CoreUnavailable
@@ -224,3 +227,24 @@ def test_product_checklist_requirement_reaches_both_model_passes():
     assert json.loads(messages[-1]['content'])['required_checklists'] == ['D1']
     checked = build_review_messages(messages, {'status': 'insufficient_data'})
     assert json.loads(checked[-1]['content'])['required_checklists'] == ['D1']
+
+
+def test_malformed_review_over_http_preserves_valid_generation(tmp_path):
+    """Неполный отчёт API не заменяет полезный ответ на «нет данных»."""
+    chunks = make_chunks('training.md', [('Учебный учёт доступен.', None, None)], 1800)
+    calls = []
+
+    def handler(request):
+        calls.append(json.loads(request.content))
+        raw = ({'status': 'answered', 'answer': 'Учёт доступен.', 'evidence': ['D1']}
+               if len(calls) == 1 else {'result': {'status': 'insufficient_data'}})
+        return httpx.Response(200, json={'choices': [{'message': {'content': json.dumps(raw)}}]})
+
+    cfg = Settings(tmp_path, base_url='http://unit.test/v1', model='model', api_key='placeholder', retries=0)
+    client = QwenClient(cfg, httpx.MockTransport(handler))
+    response = EnergytoolCore(cfg, chunks=chunks, client=client).respond(CoreRequest(message='Учёт доступен?'))
+    assert len(calls) == 2
+    assert response.core_status == 'answered'
+    assert response.answer == 'Учёт доступен.'
+    assert response.sources
+    assert response.warnings == ['Дополнительная проверка ответа не завершена.']
