@@ -1,0 +1,11 @@
+{
+  "release_sha": "1d6c3b8a9e15e3c30508ec5018fa4cfe09441213",
+  "files": 13,
+  "zip_bytes": 55662,
+  "zip_sha256": "5c4793fdebacf22531ad37378974ad3fa3438807e7727b4acc278addeba13de4",
+  "compile": "passed",
+  "isolated_csv_validation": {
+    "status": "format_valid",
+    "rows": 18
+  }
+}

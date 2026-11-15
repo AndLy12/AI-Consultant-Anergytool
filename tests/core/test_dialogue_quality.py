@@ -3,11 +3,14 @@
 import logging
 import json
 
+import httpx
+
 import pytest
 
 from core.config import Settings
 from core.documents import make_chunks
 from core.engine import EnergytoolCore
+from core.llm import QwenClient
 from core.prompts import build_messages, build_review_messages
 from core.validation import assemble
 from core_contract import CoreRequest, CoreUnavailable
@@ -224,3 +227,217 @@ def test_product_checklist_requirement_reaches_both_model_passes():
     assert json.loads(messages[-1]['content'])['required_checklists'] == ['D1']
     checked = build_review_messages(messages, {'status': 'insufficient_data'})
     assert json.loads(checked[-1]['content'])['required_checklists'] == ['D1']
+
+
+def test_malformed_review_over_http_preserves_valid_generation(tmp_path):
+    """Неполный отчёт API не заменяет полезный ответ на «нет данных»."""
+    chunks = make_chunks('training.md', [('Учебный учёт доступен.', None, None)], 1800)
+    calls = []
+
+    def handler(request):
+        calls.append(json.loads(request.content))
+        raw = ({'status': 'answered', 'answer': 'Учёт доступен.', 'evidence': ['D1']}
+               if len(calls) == 1 else {'result': {'status': 'insufficient_data'}})
+        return httpx.Response(200, json={'choices': [{'message': {'content': json.dumps(raw)}}]})
+
+    cfg = Settings(tmp_path, base_url='http://unit.test/v1', model='model', api_key='placeholder', retries=0)
+    client = QwenClient(cfg, httpx.MockTransport(handler))
+    response = EnergytoolCore(cfg, chunks=chunks, client=client).respond(CoreRequest(message='Учёт доступен?'))
+    assert len(calls) == 2
+    assert response.core_status == 'answered'
+    assert response.answer == 'Учёт доступен.'
+    assert response.sources
+    assert response.warnings == ['Дополнительная проверка ответа не завершена.']
+
+
+def test_solar_assessment_preparation_question_uses_checklist_intent():
+    """Запрос списка исходных данных отделяем от просьбы оценить мощность."""
+    from core.dialogue import data_checklist_question
+
+    assert data_checklist_question('Рассматриваем солнечную станцию. Что нужно для оценки?')
+    assert not data_checklist_question('Можете оценить мощность станции?')
+
+
+@pytest.mark.parametrize('draft', [None, 'Рассматриваем солнечную станцию', '900 кВт'])
+def test_application_card_after_product_and_power_correction(draft):
+    """Карточка сохраняет обе поправки даже при неполном черновике от модели."""
+    request = CoreRequest(history=[{'role': 'user', 'content':
+        'У нас склад мощностью 600 кВт. Рассматриваем солнечную станцию. Что нужно для оценки?'}],
+        message='Исправляю: мощность склада 900 кВт. Солнечную станцию исключаем, '
+                'нужен только учёт электроэнергии. Подготовь резюме для специалиста.')
+    result = assemble({'status': 'insufficient_data', 'summary_draft': draft}, (), request)
+    assert '900 кВт' in result.summary_draft
+    assert 'только учёт электроэнергии' in result.summary_draft
+    assert '600' not in result.summary_draft
+    assert 'солнечн' not in result.summary_draft.lower()
+
+
+@pytest.mark.parametrize('history,expected,absent', [
+    (['Первый склад: 600 кВт; второй склад: 900 кВт.',
+      'Поправка: у второго склада 800 кВт.'],
+     ['Первый склад: 600 кВт', 'второго склада 800 кВт'], ['900 кВт']),
+    (['Солнечную станцию исключаем.', 'Теперь снова нужна солнечная станция.'],
+     ['снова нужна солнечная станция'], ['исключаем']),
+    (['У нас склад.','Нужен учёт электроэнергии. Подготовь резюме для специалиста.'],
+     ['склад', 'учёт электроэнергии'], ['Подготовь']),
+])
+def test_card_keeps_current_facts(history, expected, absent):
+    request = CoreRequest(message=history[-1] if 'Подготовь' in history[-1] else 'Подготовь резюме.',
+        history=[{'role': 'user', 'content': text} for text in
+                 (history[:-1] if 'Подготовь' in history[-1] else history)])
+    draft = assemble({'status': 'insufficient_data'}, (), request).summary_draft
+    assert all(value in draft for value in expected)
+    assert all(value not in draft for value in absent)
+
+
+def test_explicit_object_list_for_application_creates_card():
+    """Команда из разработческой цепочки явно заказывает черновик заявки."""
+    request = CoreRequest(message='Перечисли оба объекта для заявки.', history=[
+        {'role': 'user', 'content': 'Объект А имеет 600 кВт, объект Б — 1200 кВт.'}])
+    result = assemble({'status': 'insufficient_data'}, (), request)
+    assert result.summary_draft
+    assert 'Объект А имеет 600 кВт' in result.summary_draft
+    assert 'объект Б — 1200 кВт' in result.summary_draft
+
+
+def test_enumerating_product_conditions_does_not_order_card():
+    """Перечисление свойств продукта само по себе не является заказом заявки."""
+    request = CoreRequest(message='Перечисли условия подключения станции.')
+    result = assemble({'status': 'insufficient_data'}, (), request)
+    assert result.summary_draft is None
+
+
+@pytest.mark.parametrize('old,new,absent,expected', [
+    ('Объект пока называем складом.', 'Уточнение: это завод, не склад.', 'склад', 'завод'),
+    ('Сейчас техник вручную снимает показания.', 'Поправка: сбор уже автоматический.',
+     'вручную', 'автоматический'),
+    ('У нас склад мощностью 600 кВт.', 'Мощность 700 кВт. Исправляю: мощность 900 кВт.',
+     '700 кВт', '900 кВт'),
+])
+def test_development_corrections_remove_obsolete_card_facts(old, new, absent, expected):
+    request = CoreRequest(message='Подготовь резюме.', history=[
+        {'role': 'user', 'content': old}, {'role': 'user', 'content': new}])
+    draft = assemble({'status': 'insufficient_data'}, (), request).summary_draft
+    assert expected in draft
+    assert absent.lower() not in draft.lower()
+
+
+def test_model_partial_summary_does_not_drop_corrected_object():
+    request = CoreRequest(message='Подготовь резюме.', history=[
+        {'role': 'user', 'content': 'Склад мощностью 600 кВт.'},
+        {'role': 'user', 'content': 'Исправляю: завод мощностью 900 кВт.'}])
+    draft = assemble({'status': 'insufficient_data', 'summary_draft': '900 кВт'}, (), request).summary_draft
+    assert '900 кВт' in draft
+    assert 'завод' in draft
+    assert '600' not in draft
+
+
+def test_named_object_correction_changes_only_that_object():
+    """Разработческая цепочка с А и Б имеет явную привязку поправки."""
+    request = CoreRequest(message='Перечисли оба объекта для заявки.', history=[
+        {'role': 'user', 'content': 'Объект А имеет 600 кВт, объект Б — 900 кВт.'},
+        {'role': 'user', 'content': 'По объекту Б поправка: 1200 кВт.'}])
+    draft = assemble({'status': 'insufficient_data'}, (), request).summary_draft
+    assert 'Объект А имеет 600 кВт' in draft
+    assert 'объекту Б поправка: 1200 кВт' in draft
+    assert '900' not in draft
+
+
+def test_ambiguous_object_correction_keeps_history_for_confirmation():
+    """Без метки объекта нельзя удалять значение другого объекта по догадке."""
+    request = CoreRequest(message='Подготовь резюме.', history=[
+        {'role': 'user', 'content': 'Объект А имеет 600 кВт, объект Б — 900 кВт.'},
+        {'role': 'user', 'content': 'У одного из них поправка: 1200 кВт.'}])
+    draft = assemble({'status': 'insufficient_data'}, (), request).summary_draft
+    assert '600' in draft and '900' in draft and '1200' in draft
+
+
+def test_named_objects_do_not_bypass_excluded_product_filter():
+    """Привязка мощностей к меткам не возвращает исключённую солнечную задачу."""
+    request = CoreRequest(message='Солнечную станцию исключаем, нужен только учёт. Подготовь резюме.',
+        history=[{'role': 'user', 'content': 'Объект А имеет 600 кВт. Рассматриваем солнечную станцию.'}])
+    draft = assemble({'status': 'insufficient_data'}, (), request).summary_draft
+    assert '600 кВт' in draft
+    assert 'только учёт' in draft
+    assert 'солнечн' not in draft.lower()
+
+
+@pytest.mark.parametrize('message', [
+    'Не резюмируй пока.',
+    'Не перечисляй объекты для заявки.',
+    'Не надо подводить итоги.',
+    'Не собирай заявку.',
+])
+def test_explicit_card_opt_out_is_respected(message):
+    """Явный отказ от подготовки черновика действует и для альтернативных глаголов."""
+    request = CoreRequest(message=message, history=[
+        {'role': 'user', 'content': 'Склад, мощность 900 кВт. Нужен учёт.'}])
+    assert assemble({'status': 'insufficient_data'}, (), request).summary_draft is None
+
+
+def test_engine_repairs_malformed_provider_envelope(tmp_path):
+    """После неверного конверта вторая попытка возвращает консультацию с источником."""
+    chunks = make_chunks('training.md', [('Учёт доступен.', None, None)], 1800)
+    calls = []
+    def handler(request):
+        calls.append(json.loads(request.content))
+        if len(calls) == 1:
+            return httpx.Response(200, json={'choices': [None]})
+        return httpx.Response(200, json={'choices': [{'message': {'content': json.dumps({
+            'status': 'answered', 'answer': 'Учёт доступен.', 'evidence': ['D1']})}}]})
+    cfg = Settings(tmp_path, base_url='http://unit.test/v1', model='model', api_key='placeholder',
+                   retries=0, review_answers=False)
+    result = EnergytoolCore(cfg, chunks=chunks, client=QwenClient(cfg, httpx.MockTransport(handler))).respond(
+        CoreRequest(message='Учёт доступен?'))
+    assert len(calls) == 2
+    assert result.core_status == 'answered'
+    assert result.sources
+
+
+@pytest.mark.parametrize('message', [
+    'Не надо перечислять объекты для заявки.',
+    'Не нужно составлять резюме.',
+    'Не следует оформлять заявку.',
+    'Не хочу готовить заявку, просто расскажи об учёте.',
+])
+def test_modal_card_opt_out_is_respected(message):
+    """Модальные формы отказа не должны превращаться в заказ карточки."""
+    request = CoreRequest(message=message, history=[
+        {'role': 'user', 'content': 'Объект — склад, мощность 900 кВт.'}])
+    assert assemble({'status': 'insufficient_data'}, (), request).summary_draft is None
+
+
+@pytest.mark.parametrize("number", ["9" * 4000, "999 " * 2000])
+def test_long_number_without_unit_does_not_block_summary_parser(number):
+    """Число без единицы не должно запускать повторный поиск каждого суффикса."""
+    import time
+    from core.dialogue import summary_excerpts
+    text = 'Исправляю: ' + number + ' без единицы измерения.'
+    started = time.monotonic()
+    result = summary_excerpts([text])
+    elapsed = time.monotonic() - started
+    assert elapsed < 0.5
+    assert ''.join(result).count('9') == number.count('9')
+
+
+@pytest.mark.parametrize('value', ['1 200', '1\u00a0200', '1200,5', '1200.5'])
+def test_number_scan_optimization_preserves_valid_power_corrections(value):
+    """Граница числа сохраняет целые разряды и десятичную часть вместе с единицей."""
+    request = CoreRequest(message='Подготовь резюме.', history=[
+        {'role': 'user', 'content': 'Мощность 600 кВт.'},
+        {'role': 'user', 'content': f'Исправляю: мощность {value} кВт.'}])
+    draft = assemble({'status': 'insufficient_data'}, (), request).summary_draft
+    assert value + ' кВт' in draft
+    assert '600' not in draft
+def test_power_correction_keeps_other_object_without_number():
+    """Явная поправка склада не стирает мощность отдельно названного офиса."""
+    from core.dialogue import summary_excerpts
+    text = '\n'.join(summary_excerpts([
+        'Склад 600 кВт. Офис 100 кВт.',
+        'Исправляю: мощность склада 900 кВт. Подготовь резюме.',
+    ]))
+    assert 'Офис 100 кВт' in text
+    assert '900 кВт' in text
+    assert '600 кВт' not in text
+
+

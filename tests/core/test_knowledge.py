@@ -112,3 +112,29 @@ def test_context_keeps_result_caveat_outside_found_section():
     context = SearchIndex(chunks).context((Hit(chunks[0], 1),), 2000)
     assert any('вывод требует проверки' in c.text for c in context)
     assert any('проверяющий' in c.text for c in context)
+
+
+def test_knowledge_report_applies_same_exclusions_as_core(tmp_path):
+    """Штатный офлайн-отчёт не включает раздел отвергнутого продукта."""
+    import csv
+    from core.documents import load_chunks
+    from core.dialogue import search_intent
+    from core_contract import CoreRequest
+    base = tmp_path / 'knowledge-base'
+    base.mkdir()
+    (base / 'shared.md').write_text(
+        '# Общая инструкция\n\n## Экспорт\n\nВыгрузка CSV доступна.\n\n'
+        '## Ограничения солнечные электростанции\n\nПанели требуют очистки.', encoding='utf-8')
+    message = 'Панели не нужны, нужен учёт. Есть выгрузка CSV?'
+    questions = tmp_path / 'questions.csv'
+    with questions.open('w', newline='', encoding='utf-8') as stream:
+        writer = csv.writer(stream)
+        writer.writerow(['id', 'question'])
+        writer.writerow(['001', message])
+    report = check(tmp_path, questions)
+    chunks = {c.chunk_id: c for c in load_chunks(Settings(data_dir=tmp_path))}
+    intent = search_intent(CoreRequest(message=message))
+    context_ids = report['cases'][0]['context_chunk_ids']
+    assert context_ids
+    index = SearchIndex(tuple(chunks.values()))
+    assert all(index.allowed(chunks[i], intent) for i in context_ids)

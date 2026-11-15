@@ -13,7 +13,7 @@ TOPICS = (
     # Родительный падеж в явном назначении «для учёта» сохраняет тему.
     # Произвольное «система учёта» не определяет продукт клиента; остальные
     # ресурсы и реактивная энергия по-прежнему не назначаются этой платформе.
-    (r'автоматическ\w* уч[её]т|автоматизи\w* сбор|аскуэ|по цехам|по арендатор|облачн\w* платформ|платформ\w* уч[её]т|\bsim\b|сим[- ]карт|симки|\b(?:уч[её]т|для\s+уч[её]та)\b(?!\s+(?:вод|тепл|газ|реактив))', 'облачная платформа'),
+    (r'автоматическ\w* уч[её]т|автоматизи\w* сбор|аскуэ|по цехам|по арендатор|облачн\w* платформ|облачн\w*\s+уч[её]т\w*|платформ\w* уч[её]т|\bsim\b|сим[- ]карт|симки|\b(?:уч[её]т|для\s+уч[её]та)\b(?!\s+(?:вод|тепл|газ|реактив))', 'облачная платформа'),
     (r'\bфото\b|фотограф|снимк|распозна', 'распознавание показаний'),
     (r'солнечн|фотоэлектр|панел|крыш|кровл|скат|фасад', 'солнечные электростанции'),
     (r'ценов\w* категори', 'ценовые категории'),
@@ -27,15 +27,20 @@ PREPARATION_SECTIONS = {
     'поиск коммерческих потерь': 'для поиска коммерческих потерь',
     'выход на оптовый рынок': 'для анализа затрат и выхода на оптовый рынок',
 }
-CLAUSES = re.compile(r'[.!?;,\n]+|\s+\b(?:но|зато|а(?!\s+не\b))\b\s+', re.I)
+# «И» разделяет решения лишь при новом сказуемом. В перечислении
+# «панели и оптовый рынок не нужны» отрицание относится к обоим продуктам.
+CLAUSES = re.compile(
+    r'[.!?;,\n]+|\s+\b(?:но|зато|а(?!\s+не\b))\b\s+|'
+    r'\s+и\s+(?=(?:не\s+)?(?:нуж(?:ен|на|но|ны)|отказ\w*|'
+    r'рассматрива\w*|планиру\w*)\b)', re.I)
 RETURN_FIRST = re.compile(r'верн\w*[^.!?\n]{0,50}к\s+перв\w*\s+(?:вопрос|тем|вариант|продукт|решени)', re.I)
 # Отказ может стоять после названия продукта: «от панелей отказались».
 # Проверка двойного отрицания ниже относится и к этому порядку слов.
 # «Не требуются» описывает отказ, а «не требуют обслуживания» — свойство
 # продукта. Нельзя отбрасывать продукт по общему префиксу «требу».
 REFUSAL = re.compile(r'\bне\s+(?:нуж(?:ен|на|но|ны)|надо|интерес\w*|рассматрива\w*|планиру\w*|хот\w*|требу(?:ет|ют)ся)\b|\bотказ\w*\s+от\b|\bот\s+[^.!?;\n]{0,100}\bотказ\w*', re.I)
-EXCLUDED = re.compile(r'\bисключ[её]н(?:а|о|ы)?\b', re.I)
-DOUBLE_NEGATION = re.compile(r'\bне\s+(?:(?:мож\w*|буд\w*|хот\w*|планиру\w*)\s+)?отказ\w*\b|\bне\s+переста\w*\s+рассматрива\w*|\bне\s+исключ[её]н(?:а|о|ы)?\b', re.I)
+EXCLUDED = re.compile(r'\b(?:исключ[её]н(?:а|о|ы)?|исключаем)\b', re.I)
+DOUBLE_NEGATION = re.compile(r'\bне\s+(?:(?:мож\w*|буд\w*|хот\w*|планиру\w*)\s+)?отказ\w*\b|\bне\s+переста\w*\s+рассматрива\w*|\bне\s+(?:исключ[её]н(?:а|о|ы)?|исключаем)\b', re.I)
 PROPERTY_ACTION = re.compile(r'менять|замен\w*|покупать|устанавливать|передавать|оплачивать|подключать|обслужива\w*|очища\w*|мыть|ремонтир\w*|чистить', re.I)
 
 
@@ -73,14 +78,22 @@ def _topic_events(text: str):
                 and re.search(r'прибор|сч[её]тчик|показан|электр|арендатор|энерго', text, re.I)
                 and not any(title == 'облачная платформа' and match for title, match in found)):
             found.append(('облачная платформа', re.search(r'един\w*\s+кабинет', clause, re.I)))
-        refusal = bool((REFUSAL.search(clause) or (not questioned and EXCLUDED.search(clause)))
+        # Отрицательный вопрос о необходимости ещё не является отказом:
+        # иначе для ответа «станция нам не нужна?» исчезнут солнечные источники.
+        # Отказ от покупки/установки продукта отличается от отрицательного
+        # свойства «SIM менять не нужно». Последнее не исключает платформу.
+        acquisition_refusal = bool(re.search(
+            r'\bне\s+(?:хот\w*|планиру\w*|буд\w*)\s+(?:устанавливать|покупать|подключать)\s+'
+            r'(?:(?:нов\w*|ваш\w*|эти)\s+)?(?:солнечн\w*\s+(?:панел\w*|станци\w*)|'
+            r'панел\w*|облачн\w*\s+платформ\w*|платформ\w*\s+уч[её]та)\b', clause, re.I))
+        refusal = bool(not questioned and (REFUSAL.search(clause) or EXCLUDED.search(clause) or acquisition_refusal)
                        and not DOUBLE_NEGATION.search(clause)
-                       and not PROPERTY_ACTION.search(clause))
+                       and (acquisition_refusal or not PROPERTY_ACTION.search(clause)))
         for title, match in sorted((item for item in found if item[1]), key=lambda item: item[1].start()):
             prefix = clause[:match.start()]
             # «Не только X» не равно «не X». Простое «не X, а Y» обрабатывается
             # до BM25; удаление всех предложений со словом «не» потеряло бы свойства.
-            direct = bool(re.search(r'\b(?:не|без)\s+$', prefix, re.I))
+            direct = bool(not questioned and re.search(r'\b(?:не|без)\s+$', prefix, re.I))
             yield title, not (refusal or direct), clause.strip()
 
 
@@ -210,48 +223,129 @@ def bounded_history(request: CoreRequest, budget: int) -> tuple[list[dict], bool
     return chosen, len(chosen) != len(request.history)
 
 
-def summary_excerpts(texts: list[str]) -> list[str]:
+# Удалять прежнее значение у нескольких объектов можно только при явном
+# совпадении номера, типа объекта и показателя. Полное совпадение фразы
+# защищает остальные сведения из той же реплики.
+_NUMBERED_POWER = re.compile(
+    r'(?:поправка|исправляю|уточняю)?[:\s]*(?:у\s+)?'
+    r'(?P<number>перв|втор)(?:ый|ой|ого)\s+(?P<object>склад|завод|офис|магазин)а?'
+    r'[:\s]+(?:мощность[:\s]+)?\d+(?:[.,]\d+)?\s*(?:кВт|МВт)', re.I)
+
+_NAMED_POWER = re.compile(
+    r'(?:по\s+)?объект(?:у|а)?\s+(?P<label>[а-яa-z]|[0-9]+)\s+'
+    r'(?:имеет\s+|[—:-]\s*)?(?:(?:поправка|исправляю|уточняю):\s*)?'
+    r'\d+(?:[.,]\d+)?\s*(?:кВт|МВт)', re.I)
+
+# Только самостоятельное утверждение: не удаляем предложение с прочими
+# фактами, если невозможно отделить старую мощность без потери его смысла.
+_OBJECT_POWER = re.compile(
+    r'(?:(?:поправка|исправляю|уточняю)[:\s]+)?(?:у\s+нас\s+)?'
+    r'(?:мощность\s+)?(?P<object>склад|офис|завод|магазин)(?:а)?'
+    r'\s+(?:мощност(?:ь|ью)\s+)?\d+(?:[.,]\d+)?\s*(?:кВт|МВт)', re.I)
+
+
+def _current_card_messages(texts, active):
+    """Убираем только однозначно заменённые выдержки до разбора остальных поправок."""
+    removed = [set() for _ in texts]
+    latest = {}
+    for turn, text in enumerate(texts):
+        for span in re.finditer(r'\S.*?(?:[.!?;](?=\s|$)|,(?=\s*объект\b)|(?=\n|$))', text):
+            clean = span.group().rstrip('.;,')
+            match = _NUMBERED_POWER.fullmatch(clean)
+            if match:
+                key = (match['number'].lower(), match['object'].lower())
+                if key in latest and re.match(r'поправка|исправляю|уточняю', clean, re.I):
+                    old_turn, old_span = latest[key]
+                    removed[old_turn].add(old_span)
+                latest[key] = (turn, span.span())
+            named = _NAMED_POWER.fullmatch(clean)
+            if named:
+                key = ('named', named['label'].lower())
+                if key in latest and re.search(r'поправка|исправляю|уточняю', clean, re.I):
+                    old_turn, old_span = latest[key]
+                    removed[old_turn].add(old_span)
+                latest[key] = (turn, span.span())
+            scoped = _OBJECT_POWER.fullmatch(clean)
+            if scoped:
+                key = ('object', scoped['object'].lower())
+                if key in latest and re.match(r'поправка|исправляю|уточняю', clean, re.I):
+                    old_turn, old_span = latest[key]
+                    removed[old_turn].add(old_span)
+                latest[key] = (turn, span.span())
+            events = list(_topic_events(clean))
+            if (events and all(not enabled and title in active for title, enabled, _ in events)
+                    and re.fullmatch(r'[а-яё -]+\s+исключаем', clean, re.I)):
+                removed[turn].add(span.span())
+
+    # Возвращаем непрерывные фрагменты исходной реплики: склейка через
+    # удалённую фразу не пройдёт проверку происхождения текста карточки.
+    result = []
+    for text, spans in zip(texts, removed):
+        start = 0
+        for left, right in sorted(spans):
+            if prefix := text[start:left].strip():
+                result.append(prefix)
+            start = right
+        if tail := text[start:].strip():
+            result.append(tail)
+    return result
+
+
+def summary_excerpts(texts: list[str], excluded: tuple[str, ...] = (), active: tuple[str, ...] = ()) -> list[str]:
     """Для явных поправок не копируем прежнее значение в запасной черновик.
 
     Обрабатываем только названные с единицами параметры и явную коррекцию.
     Каждый результат — исходная выдержка; разные объекты и неопределённые ссылки
     не сводим к одному значению. Это не замена смысловой проверке резюме моделью.
     """
+    original_texts = texts
+    texts = _current_card_messages(texts, active)
     correction = re.compile(
-        r'исправля\w*|поправ\w*|уточняю|ошибся|ошиблась|'
+        r'исправля\w*|поправ\w*|уточняю|уточнение|ошибся|ошиблась|'
         r'\bне\s+(?!только\b)[^.!?\n]{1,40}\s+а\s+', re.I)
-    if not any(correction.search(text) for text in texts):
+    if not excluded and not any(correction.search(text) for text in texts):
         return texts
-    value = r'\d+(?:[ \u00a0]\d{3})*(?:[.,]\d+)?\s*(?:(?:тыс(?:яч\w*)?\.?|млн|миллион\w*)\s*)?'
+    # При нескольких объектах не сводим мощность к общему слоту. Явные
+    # метки уже разрешены выше; неопределённые поправки требуют подтверждения.
+    separate_objects = any(_NAMED_POWER.search(text) or (
+        correction.search(text)
+        and re.search(r'перв\w*|втор\w*|друг\w*|одн\w*\s+из', text, re.I))
+        for text in original_texts)
+    # «Склад» и «офис» также обозначают разные объекты без номеров. Для
+    # них общий слот мощности небезопасен; точные замены обработаны выше,
+    # неоднозначные остаются в исходной хронологии для подтверждения.
+    separate_objects = separate_objects or any(
+        not correction.search(text) and len({match.group(1).lower()
+            for match in re.finditer(r'\b(склад|офис|завод|магазин)\w*', text, re.I)}) > 1
+        for text in original_texts)
+    # Не начинаем число с середины другого числа. Без этой границы длинная
+    # последовательность цифр без единицы проверялась со всех позиций
+    # и давала квадратичное время разбора допустимого входного сообщения.
+    value = r'(?<![\d.,])(?<!\d[ \u00a0])\d+(?:[ \u00a0]\d{3})*(?:[.,]\d+)?\s*(?:(?:тыс(?:яч\w*)?\.?|млн|миллион\w*)\s*)?'
     quantity = (r'(?:(?:не\s+(?:менее|более|ниже|выше)|от|до|около|примерно)\s+)?' + value
                 + r'(?:\s*(?:[-–—]|до)\s*' + value + r')?')
     patterns = (
         ('consumption', re.compile(r'(?:потреблен\w*\s*[:—-]?\s*)?' + quantity +
             r'(?:[км]вт\s*[·⋅*-]?\s*ч|киловатт[- ]?час\w*|мегаватт[- ]?час\w*)'
             r'(?:\s*(?:в|за|/)\s*(?:месяц\w*|год\w*|сут\w*))?', re.I)),
-        ('power', re.compile(r'(?:мощност\w*\s*[:—-]?\s*)?' + quantity +
+        ('power', re.compile(r'(?:мощност\w*(?:\s+склада)?\s*[:—-]?\s*)?' + quantity +
             r'(?:[км]вт(?!\s*[·⋅*-]?\s*ч\b)|киловатт\w*(?![- ]час)|мегаватт\w*(?![- ]час))\b', re.I)),
         ('object', re.compile(r'\b(?:склад\w*|завод\w*|производств\w*|офис\w*|магазин\w*|бизнес[- ]центр\w*)\b', re.I)),
         ('metering', re.compile(r'\b(?:ручн\w*|автоматическ\w*|автоматизированн\w*)\s+'
-                               r'(?:сбор\w*(?:\s+показан\w*)?|уч[её]т\w*)|\bАСКУЭ\b', re.I)),
+                               r'(?:сбор\w*(?:\s+показан\w*)?|уч[её]т\w*)|'
+                               r'\bсбор\w*\s+(?:уже\s+)?(?:автоматическ\w*|ручн\w*)|'
+                               r'\bвручную\s+снима\w*\s+показан\w*|\bАСКУЭ\b', re.I)),
     )
     records = []
     for text in texts:
-        # У разных объектов одноимённые параметры не являются противоречием.
-        # Для таких поправок оставляем исходную хронологию для ручного разбора.
-        if correction.search(text) and re.search(r'перв\w*|втор\w*|друг\w*|одн\w*\s+из', text, re.I):
-            return texts
         facts = []
-        for slot, pattern in patterns:
+        for slot, pattern in (() if separate_objects else patterns):
             facts.extend((slot, match.group(), match.start(), match.end()) for match in pattern.finditer(text))
         # КВт·ч нельзя одновременно принять за мощность, в том числе при
         # написании единицы словами. Более длинный показатель имеет приоритет.
         facts = [fact for fact in facts if fact[0] != 'power' or not any(
             other[0] == 'consumption' and other[2] <= fact[2] < other[3] for other in facts)]
         facts = [fact for fact in facts if not re.search(r'\b(?:не|вместо)\s+$', text[:fact[2]], re.I)]
-        if correction.search(text):
-            replaced = {slot for slot, _, _, _ in facts}
-            records = [(slot, quote) for slot, quote in records if slot not in replaced]
         # Не разрываем десятичные числа и «тыс.» внутри уже найденной величины.
         boundaries = [0]
         for match in re.finditer(r'[.!?;,\n]+', text):
@@ -268,7 +362,25 @@ def summary_excerpts(texts: list[str]) -> list[str]:
                     r'^(?:а\s+)?не\s+(?!менее\b|более\b|ниже\b|выше\b|меньше\b|больше\b)', clause, re.I):
                 continue
             present = [(slot, quote) for slot, quote, _, _ in facts if quote in clause]
-            records.extend(present or [(None, clause)])
+            if correction.search(text[:end]):
+                # Исправление в конце реплики заменяет и прежнее значение
+                # из её начала, а не только факты предыдущих сообщений.
+                replaced = {slot for slot, _ in present}
+                records = [(slot, quote) for slot, quote in records if slot not in replaced]
+            if excluded:
+                # В карточке сохраняем факты об объекте отдельно от снятой темы.
+                # Вопросы клиента и фразы об исключённом продукте не являются заявкой.
+                if any(title in excluded for title, _, _ in _topic_events(clause)):
+                    records.extend((slot, quote) for slot, quote in present
+                                   if slot in {'object', 'power', 'consumption'})
+                    continue
+                if text[end:end + 1] == '?':
+                    continue
+            # Если показатель уже содержит название объекта, оставляем одну
+            # читаемую выдержку («мощность склада 900 кВт»).
+            records.extend([(slot, quote) for slot, quote in present
+                            if not any(quote != other and quote in other for _, other in present)]
+                           or [(None, clause)])
     return list(dict.fromkeys(quote for _, quote in records))
 
 
@@ -302,6 +414,7 @@ def search_query(request: CoreRequest) -> str:
 def data_checklist_question(text: str) -> bool:
     """Просьбу перечислить исходные данные отличаем от индивидуального расчёта."""
     return bool(re.search(
+        r'что\s+(?:нужно|требуется)\s+для\s+(?:предварительной\s+)?оценки\b|'
         r'понадоб|потребу(?:ет|ют)ся|с чего(?:\s+\w+){0,2}\s+нач|'
         r'каки\w*(?:\s+\w+){0,3}\s+(?:данн|сведен|параметр)|'
         r'что(?:\s+\w+){0,4}\s+(?:предостав|подготов|узна|уточн|сообщ|собра|расч[её]т)', text, re.I))

@@ -34,9 +34,9 @@ def main():
             row = {"id": case["case_id"], "expected": case["expected_action"]}
             original_context = core.index.context
 
-            def evaluation_context(hits, budget):
+            def evaluation_context(hits, budget, *, request=None):
                 """Проверочная строка попадает лишь в копию возвращённого контекста."""
-                chunks = original_context(hits, budget)
+                chunks = original_context(hits, budget, request=request)
                 fixture = case.get("context_fixture")
                 if chunks and fixture:
                     first = replace(chunks[0], text=chunks[0].text + "\n" + fixture["text"])

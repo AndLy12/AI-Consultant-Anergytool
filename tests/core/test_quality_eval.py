@@ -189,7 +189,7 @@ def test_reviewer_schema_requires_result(tmp_path):
         assert 'answer' in branches['answered']['required']
         assert 'question' in branches['clarification_needed']['required']
         return httpx.Response(200, json={'choices': [{'message': {'content':
-            '{"issues":[],"result":{"status":"insufficient_data"}}'}}]})
+            '{"issues":[],"follow_up_question":null,"result":{"status":"insufficient_data"}}'}}]})
     cfg = Settings(tmp_path, base_url='http://unit.test/v1', model='model', api_key='placeholder', retries=0)
     result = QwenClient(cfg, httpx.MockTransport(handler)).review([], time.monotonic() + 2)
     assert result['result']['status'] == 'insufficient_data'
@@ -512,3 +512,55 @@ def test_generation_wire_schema_requires_answer_evidence_and_specific_question(t
     cfg = Settings(tmp_path, base_url='http://unit.test/v1', model='model', api_key='placeholder')
     result = QwenClient(cfg, httpx.MockTransport(handler)).complete([], time.monotonic() + 2)
     assert result['status'] == 'insufficient_data'
+
+
+@pytest.mark.parametrize('review', [
+    {'result': {'status': 'insufficient_data'}},
+    {'issues': 'Ошибок нет', 'follow_up_question': None, 'result': {'status': 'insufficient_data'}},
+    {'issues': [123], 'follow_up_question': None, 'result': {'status': 'insufficient_data'}},
+    {'issues': [], 'follow_up_question': ' ', 'result': {'status': 'insufficient_data'}},
+    {'issues': [], 'follow_up_question': None, 'result': {'status': 'insufficient_data'}, 'extra': True},
+])
+def test_reviewer_rejects_invalid_envelope_without_exposing_content(tmp_path, review):
+    """Прокси без JSON Schema не должен превращать некорректный review в успех."""
+    def handler(request):
+        return httpx.Response(200, json={'choices': [{'message': {'content': json.dumps(review)}}]})
+
+    cfg = Settings(tmp_path, base_url='http://unit.test/v1', model='model', api_key='placeholder', retries=0)
+    with pytest.raises(ModelResponseError) as error:
+        QwenClient(cfg, httpx.MockTransport(handler)).review([], time.monotonic() + 2)
+    assert 'Ошибок нет' not in str(error.value)
+    assert 'placeholder' not in str(error.value)
+
+
+@pytest.mark.parametrize('status', [400, 422])
+def test_context_overflow_is_classified_after_provider_options_disabled(tmp_path, status):
+    """Диагноз длины не зависит от того, поддерживает ли сервер JSON-режим."""
+    from core_contract import ProviderError
+    calls = []
+    def handler(request):
+        calls.append(request)
+        return httpx.Response(status, json={'error': {
+            'code': 'context_length_exceeded', 'message': 'Секретный текст запроса placeholder'}})
+
+    client = QwenClient(Settings(tmp_path, base_url='http://unit.test/v1',
+                        model='model', api_key='placeholder'), httpx.MockTransport(handler))
+    client.use_json_mode = client.use_reasoning_effort = client.use_thinking_option = False
+    with pytest.raises(ProviderError) as error:
+        client.complete([], time.monotonic() + 2)
+    assert error.value.category == 'context_length'
+    assert 'Секретный текст' not in str(error.value)
+    assert 'placeholder' not in str(error.value)
+    assert len(calls) == 1
+
+
+@pytest.mark.parametrize('choice', [None, 17, 'секретный текст', {'message': None}, {'message': []}])
+def test_malformed_provider_envelope_is_model_response_error(tmp_path, choice):
+    """Некорректная структура ответа допускает исправление формата, не сетевой повтор."""
+    def handler(request):
+        return httpx.Response(200, json={'choices': [choice]})
+    client = QwenClient(Settings(tmp_path, base_url='http://unit.test/v1', model='model',
+                        api_key='placeholder', retries=0), httpx.MockTransport(handler))
+    with pytest.raises(ModelResponseError) as error:
+        client.complete([], time.monotonic() + 2)
+    assert 'секретный текст' not in str(error.value)

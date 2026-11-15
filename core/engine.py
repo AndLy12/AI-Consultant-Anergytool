@@ -84,11 +84,11 @@ class EnergytoolCore:
                     hits = tuple(required) + tuple(h for h in hits if h.chunk.chunk_id not in required_ids)
                 timings['rerank'] = time.monotonic() - rerank_started
                 context_started = time.monotonic()
-                # Сохраняем двухаргументный вызов для инструментов QA, которые
-                # подставляют проверочное вложение в копию возвращённого контекста.
+                # Исключения применяются до расходования бюджета. Если удалить
+                # чужие разделы лишь после сборки, они вытеснят нужные условия.
                 context_intent = search_intent(bounded_request)
                 chunks = tuple(c for c in self.index.context(
-                    hits[:self.settings.top_k], self.settings.context_chars)
+                    hits[:self.settings.top_k], self.settings.context_chars, request=bounded_request)
                     if self.index.allowed(c, context_intent))
                 if not chunks:
                     return assemble({'status': 'insufficient_data'}, (), bounded_request,

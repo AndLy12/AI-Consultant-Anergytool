@@ -5,19 +5,22 @@ from copy import deepcopy
 import re
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 from core_contract import CoreResponse, CoreUnavailable, ModelResponseError, Source
-from core.dialogue import summary_excerpts, data_checklist_question
+from core.dialogue import search_intent, summary_excerpts, data_checklist_question
 
 
 # Запрос на черновик распознаём по явному действию. Слово «итоговая»
 # в вопросе о стоимости не означает просьбу подготовить заявку.
 SUMMARY_REQUEST = re.compile(
     r'\b(?:подытож\w*|резюмиру\w*)\b|'
-    r'\b(?:подготов\w*|состав\w*|собер\w*|сформир\w*|сдела\w*|оформ\w*|подвед\w*)'
+    r'\b(?:подготов\w*|состав\w*|собер\w*|сформир\w*|сдела\w*|оформ\w*|подвед\w*|перечисл\w*)'
     r'\b[^.!?\n]{0,80}\b(?:резюме|заявк\w*|итог(?:и)?)\b|'
     r'\b(?:можно|нужно|хочу)\s+(?:краткое\s+)?резюме\b', re.I)
 SUMMARY_DECLINED = re.compile(
+    r'\bне\s+(?:(?:надо|нужно|хочу)\s+)?(?:резюмир\w*|подытож\w*)\b|'
+    r'\bне\s+(?:(?:надо|нужно|хочу|следует)\s+)?'
+    r'(?:перечисл|состав|оформ|подготов|сдела|дела|собер|подвед)\w*'
+    r'[^.!?\n]{0,80}\b(?:заявк\w*|резюме|итог(?:и)?)\b|'
     r'\bне\s+(?:хочу|нужн\w*|надо)\s+(?:краткое\s+)?резюме\b|'
-    r'\bне\s+(?:состав|оформ|подготов|дела)\w*[^.!?\n]{0,40}(?:резюме|заявк)|'
     r'\b(?:резюме|заявк\w*)\s+не\s+(?:нужн\w*|надо)', re.I)
 
 INLINE_ALIAS = re.compile(r'\s*(?:\((D\d+(?:\s*,\s*D\d+)*)\)|\[(D\d+(?:\s*,\s*D\d+)*)\])')
@@ -169,13 +172,19 @@ def assemble(raw, chunks, request, *, demo=False, truncated=False, secret='') ->
     summary_requested = bool(SUMMARY_REQUEST.search(request.message)
                              and not SUMMARY_DECLINED.search(request.message))
     user_texts = [request.message] + [turn.content for turn in request.history if turn.role == 'user']
-    summary_texts = summary_excerpts(user_texts[1:] + user_texts[:1]) if summary_requested else user_texts
+    intent = search_intent(request) if summary_requested else None
+    excluded = intent.excluded if intent else ()
+    summary_texts = summary_excerpts(user_texts[1:] + user_texts[:1], excluded, intent.active) if intent else user_texts
     if isinstance(raw, dict) and raw.get('summary_draft') is not None:
         draft = raw['summary_draft']
         verified = (isinstance(draft, str) and bool(draft.strip()) and len(draft) <= 3000
                     and all(not line.strip() or any(line.strip() in text for text in summary_texts)
                             for line in draft.splitlines()))
-        if not summary_requested or not verified:
+        # После разрешения поправок даже дословный черновик модели может
+        # содержать только мощность и пропустить исправленный объект/задачу.
+        # Восстанавливаем его из актуальных выдержек целиком.
+        if (excluded or not summary_requested or not verified
+                or summary_texts != user_texts[1:] + user_texts[:1]):
             # Неподтверждённый или незапрошенный черновик не стирает ответ.
             # При явной просьбе ниже восстановим исходные выдержки.
             raw = dict(raw, summary_draft=None)
@@ -281,8 +290,15 @@ def assemble(raw, chunks, request, *, demo=False, truncated=False, secret='') ->
         # сохраняют хронологию и требуют проверки пользователем. Длинные
         # выдержки пропускаем целиком, не обрезая фразу в середине.
         parts, size = [], 0
-        candidates = [text for text in summary_texts if not (
-            request.history and SUMMARY_REQUEST.search(text))]
+        candidates = []
+        for text in summary_texts:
+            if request.history and SUMMARY_REQUEST.search(text):
+                # Отдельное предложение с поручением может следовать за фактом
+                # в той же реплике. Сохраняем фактическую часть дословно.
+                candidates.extend(sentence for sentence in re.split(r'(?<=[.!?;])\s+', text)
+                                  if not SUMMARY_REQUEST.search(sentence))
+            else:
+                candidates.append(text)
         for text in reversed(candidates):
             if size + len(text) + 1 <= 3000:
                 parts.append(text)

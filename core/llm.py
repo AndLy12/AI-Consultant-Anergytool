@@ -4,8 +4,9 @@ import asyncio
 import json
 import time
 import httpx
+from pydantic import ValidationError
 from core_contract import CoreUnavailable, ModelResponseError, ProviderError
-from core.validation import generation_schema, review_schema
+from core.validation import AnswerReview, generation_schema, review_schema
 
 MAX_RESPONSE_BYTES = 256 * 1024
 
@@ -73,7 +74,18 @@ class QwenClient:
 
     def review(self, messages, deadline):
         """Схема обязательного результата не позволяет закончить ответ одними замечаниями."""
-        return self.complete(messages, deadline, response_schema=review_schema())
+        result = self.complete(messages, deadline, response_schema=review_schema())
+        try:
+            # Совместимый сервер может игнорировать JSON Schema или поддерживать
+            # только json_object. Проверяем весь отчёт локально: иначе отсутствие
+            # issues принималось за исправление и могло затереть готовый ответ.
+            # Источники дополнительно проверяет assemble в контексте запроса.
+            AnswerReview.model_validate(result)
+        except ValidationError:
+            # Текст ошибки Pydantic содержит исходные значения: не раскрываем
+            # ответ модели или секреты в диагностике технического сбоя.
+            raise ModelResponseError('Проверка модели вернула некорректный отчёт') from None
+        return result
 
     async def _bounded(self, messages, remaining, response_schema=None):
         """Один таймаут охватывает подключение, чтение всех порций и повторы."""
@@ -109,8 +121,7 @@ class QwenClient:
                     # Без диагностики сначала снимаем JSON-режим, сохраняя настройку
                     # мышления. Все попытки разделяют исходный дедлайн; тело ошибки
                     # читаем с ограничением размера и не выводим в журнал.
-                    if response.status_code in {400, 422} and (
-                            'reasoning_effort' in payload or 'chat_template_kwargs' in payload or 'response_format' in payload):
+                    if response.status_code in {400, 422}:
                         error = bytearray()
                         async for part in response.aiter_bytes():
                             error.extend(part[:max(0, 8192 - len(error))])
@@ -128,6 +139,11 @@ class QwenClient:
                             raise ProviderError('context_length', 'Контекст запроса превышает лимит модели')
                         options = [name for name in ('response_format', 'reasoning_effort', 'chat_template_kwargs')
                                    if name in payload]
+                        # После согласования возможностей провайдера расширений
+                        # может уже не быть. Длину всё равно диагностируем выше,
+                        # остальные 400/422 не повторяем как сетевой сбой.
+                        if not options:
+                            raise CoreUnavailable('API вернул неподдерживаемый HTTP-статус')
                         rejected = next((name for name in options if name in detail), options[0])
                         flag = {'response_format': 'use_json_mode',
                                 'reasoning_effort': 'use_reasoning_effort',
@@ -157,9 +173,16 @@ class QwenClient:
                         try:
                             body = json.loads(content)
                             choice = body['choices'][0]
+                            # Даже HTTP 200 может содержать неверный конверт.
+                            # Ошибка структуры должна допускать обычную попытку
+                            # исправления формата, как и некорректный JSON модели.
+                            if not isinstance(choice, dict):
+                                raise ValueError
                             if choice.get('finish_reason') == 'length':
                                 raise ModelResponseError('Модель исчерпала лимит токенов', 'truncated')
                             message = choice['message']
+                            if not isinstance(message, dict):
+                                raise ValueError
                             if message.get('tool_calls') or not isinstance(message.get('content'), str):
                                 raise ValueError
                             text = message['content'].strip()
