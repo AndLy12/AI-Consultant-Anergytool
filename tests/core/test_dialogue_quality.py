@@ -150,6 +150,18 @@ def test_review_with_no_issues_but_invalid_sources_is_still_reported_incomplete(
     assert 'Дополнительная проверка ответа не завершена.' in response.warnings
 
 
+def test_correction_focus_uses_only_bounded_user_messages_and_redacts_secret():
+    request = CoreRequest(message='Какие сведения нужны?', history=[
+        {'role': 'user', 'content': 'Сначала исправляю старые данные.'}])
+    history = [{'role': 'assistant', 'content': 'Поправка: выдуманное количество 999.'},
+               {'role': 'user', 'content': 'Поправка: сбор автоматический. server-secret'}]
+    messages = build_messages(request, history, (), secret='server-secret')
+    payload = json.loads(messages[1]['content'])
+    assert payload['client_corrections'] == ['Поправка: сбор автоматический. [секрет удалён]']
+    assert '999' not in ''.join(payload['client_corrections'])
+    assert 'client_corrections' not in json.loads(build_messages(request, [], ())[1]['content'])
+
+
 @pytest.mark.parametrize('new', [
     'мощность 900 кВт, а не 600 кВт',
     'мощность не менее 900 кВт',

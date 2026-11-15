@@ -38,6 +38,8 @@ SYSTEM_PROMPT = """Ты консультант МТС Energytool. Ответь �
 типовым диапазоном мощности оборудования.
 При расширении проекта объясни предел типового диапазона для итогового решения,
 а не только возможность наращивания. Если итоговая мощность не сообщена, уточни её.
+Для допуска на рынок одного порога мощности недостаточно: проверь территориальные
+ограничения из источника вместе с уже сообщённым регионом клиента.
 Если для проверки доступа нужен пороговый параметр, назови применимый порог из документа.
 Не добавляй ограничения, не влияющие на текущий вопрос.
 Для вывода о достаточности данных проверь каждый обязательный пункт источника по словам клиента.
@@ -85,6 +87,20 @@ def build_messages(request, history, chunks, secret=''):
         'documents': [{'chunk_id': f'D{i}', 'title': c.title, 'section': c.section,
                        'text': c.text} for i, c in enumerate(chunks, 1)],
     }
+    # Выделяем только дословные пользовательские поправки из уже ограниченной
+    # истории. Это подсказка внимания, не синтез фактов и не возврат отброшенной
+    # истории. Целые сообщения и общий лимит не позволяют раздуть контекст.
+    correction = re.compile(r'исправля\w*|поправ\w*|уточняю|ошибся|ошиблась|'
+                            r'вс[её][ -]таки|свеж\w*\s+выгруз', re.I)
+    corrections, correction_chars = [], 0
+    for turn in reversed(history + [{'role': 'user', 'content': request.message}]):
+        if turn['role'] == 'user' and correction.search(turn['content']):
+            if correction_chars + len(turn['content']) > 1600 or len(corrections) >= 4:
+                break
+            corrections.append(turn['content'])
+            correction_chars += len(turn['content'])
+    if corrections:
+        content['client_corrections'] = list(reversed(corrections))
     if data_checklist_question(request.message) or data_sufficiency_question(request.message):
         # Обязательность списка не должна теряться между поиском и моделью:
         # одно место в начале контекста не мешало выбирать общую справку вместо него.
@@ -95,6 +111,10 @@ def build_messages(request, history, chunks, secret=''):
     if secret:
         data = data.replace(secret, '[секрет удалён]')
     instruction = SYSTEM_PROMPT
+    if corrections:
+        instruction += ('\nВ client_corrections отдельно выделены дословные поправки пользователя. '
+                        'Сверь с ними известные параметры; старое значение не возвращается '
+                        'из прежних реплик. Эта подсказка не заменяет остальную историю.')
     if (not search_intent(request).active
             and re.search(r'систем|сервис|платформ|кабинет', request.message, re.I)):
         # Найденный документ не доказывает, что клиент использует именно этот

@@ -160,6 +160,26 @@ def test_question_about_exclusion_is_not_a_decision_to_refuse(index, message):
     assert any('Солнечные' in h.chunk.title for h in index.search_request(request, 5))
 
 
+@pytest.mark.parametrize('noun', ['продукту', 'решению'])
+def test_return_to_first_product_or_solution_resolves_original_topic(index, noun):
+    request = CoreRequest(message=f'Вернёмся к первому {noun}. Что подготовить?', history=[
+        {'role': 'user', 'content': 'Хотим солнечные панели.'},
+        {'role': 'user', 'content': 'Пока отдельно обсудим учёт.'},
+    ])
+    assert search_intent(request).active == ('солнечные электростанции',)
+    assert index.search_request(request, 5)[0].chunk.section == 'Для солнечной станции'
+
+
+def test_regional_adjective_recovers_named_source_with_power_follow_up():
+    chunks = make_chunks('regions.md', [('# Регионы\n\nКамчатка: применимость зависит от энергосистемы.', None, None)], 1800)
+    chunks += make_chunks('power.md', [('# Мощность\n\nПрисоединённая мощность 30 МВт.', None, None)], 1800)
+    request = CoreRequest(message='Присоединённая мощность 30 МВт.', history=[
+        {'role': 'user', 'content': 'Предприятие в Камчатском крае.'}])
+    hits = SearchIndex(tuple(chunks)).search_request(request, 3)
+    assert any('Камчатка' in h.chunk.text for h in hits)
+    assert 'Камчатка' not in search_query(CoreRequest(message='Нужен только учёт в Камчатском крае.'))
+
+
 def test_return_reactivates_excluded_product(index):
     request = CoreRequest(message='Вернёмся к первому варианту. Что потребуется?', history=[
         {'role': 'user', 'content': 'Нужна солнечная станция.'},
