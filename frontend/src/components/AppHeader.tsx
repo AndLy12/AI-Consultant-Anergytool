@@ -11,9 +11,11 @@ type Props = {
   onDebug: (value: boolean) => void
   onLogout: () => void
   stub: boolean
+  /** Backend сообщил core_demo: true — ответы строятся на вымышленных документах. */
+  demo: boolean
 }
 
-export default function AppHeader({ user, screen, onScreen, debug, onDebug, onLogout, stub }: Props) {
+export default function AppHeader({ user, screen, onScreen, debug, onDebug, onLogout, stub, demo }: Props) {
   return (
     <header className="app-header">
       <div className="brand">
@@ -22,6 +24,14 @@ export default function AppHeader({ user, screen, onScreen, debug, onDebug, onLo
         {stub && (
           <span className="badge badge-test" title="Ядро консультанта ещё не подключено">
             тестовый режим
+          </span>
+        )}
+        {demo && (
+          <span
+            className="badge badge-test badge-demo"
+            title="Ядро работает на вымышленных документах и заглушке модели, это не настоящая консультация"
+          >
+            Демо-режим
           </span>
         )}
       </div>

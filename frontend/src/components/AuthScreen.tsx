@@ -13,9 +13,11 @@ import { describeError } from '../lib/errors'
 type Props = {
   onSignedIn: (result: AuthResult) => void
   stub: boolean
+  /** Backend сообщил core_demo: true — предупреждаем ещё до входа. */
+  demo: boolean
 }
 
-export default function AuthScreen({ onSignedIn, stub }: Props) {
+export default function AuthScreen({ onSignedIn, stub, demo }: Props) {
   const [mode, setMode] = useState<'login' | 'register'>('login')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
@@ -55,6 +57,11 @@ export default function AuthScreen({ onSignedIn, stub }: Props) {
         {stub && (
           <p className="badge badge-test">
             Тестовый режим: ядро консультанта ещё не подключено, ответы будут заглушкой.
+          </p>
+        )}
+        {demo && (
+          <p className="badge badge-test badge-demo">
+            Демо-режим: ответы строятся на вымышленных документах, это не настоящая консультация.
           </p>
         )}
 

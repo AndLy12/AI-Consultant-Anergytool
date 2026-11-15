@@ -97,8 +97,12 @@ export default function App() {
     )
   }
 
+  const stub = health?.core_mode === 'stub'
+  // Строгое сравнение: отсутствующее поле (старый backend) не включает плашку.
+  const demo = health?.core_demo === true
+
   if (!user) {
-    return <AuthScreen onSignedIn={handleSignedIn} stub={health?.core_mode === 'stub'} />
+    return <AuthScreen onSignedIn={handleSignedIn} stub={stub} demo={demo} />
   }
 
   return (
@@ -110,7 +114,8 @@ export default function App() {
         debug={debug}
         onDebug={handleDebug}
         onLogout={handleLogout}
-        stub={health?.core_mode === 'stub'}
+        stub={stub}
+        demo={demo}
       />
       <main className="app-main">
         {screen === 'chat' && (

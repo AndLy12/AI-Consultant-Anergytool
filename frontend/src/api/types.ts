@@ -106,4 +106,13 @@ export type Health = {
   status: string
   /** 'stub' означает, что ядро консультанта ещё не подключено. */
   core_mode: string
+  /**
+   * true — ядро Данька работает на вымышленных документах и заглушке модели
+   * (CORE_MODE=real, CORE_DEMO=true). core_mode при этом 'real', поэтому
+   * признак демо-режима берём только отсюда. Старый backend поле не присылал.
+   */
+  core_demo?: boolean
+  core_ready?: boolean
+  /** 'react' — backend раздаёт эту сборку, 'diagnostic' — проверочную страницу. */
+  frontend?: string
 }
