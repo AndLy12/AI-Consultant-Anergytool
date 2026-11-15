@@ -129,6 +129,25 @@ def test_report_synonym_does_not_reintroduce_explicitly_excluded_platform(index)
     assert not any('Облачная' in h.chunk.title for h in hits)
 
 
+def test_explicit_exclusion_does_not_add_rejected_product_checklist(index):
+    request = CoreRequest(message='Панели исключены из нашего проекта. Какие данные нужны для учёта по цехам?')
+    intent = search_intent(request)
+    assert intent.active == ('облачная платформа',)
+    assert 'солнечные электростанции' in intent.excluded
+    context = index.context(index.search_request(request, 5), 14000)
+    assert all('Солнечные' not in c.title and c.section != 'Для солнечной станции' for c in context)
+
+
+@pytest.mark.parametrize('message', [
+    'Солнечная станция не исключена. Какие условия?',
+    'Панели исключают перебои в питании?',
+])
+def test_negated_exclusion_and_exclusion_as_property_keep_product(message):
+    intent = search_intent(CoreRequest(message=message))
+    assert 'солнечные электростанции' in intent.active
+    assert 'солнечные электростанции' not in intent.excluded
+
+
 def test_return_reactivates_excluded_product(index):
     request = CoreRequest(message='Вернёмся к первому варианту. Что потребуется?', history=[
         {'role': 'user', 'content': 'Нужна солнечная станция.'},
