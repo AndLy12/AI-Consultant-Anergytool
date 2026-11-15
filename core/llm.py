@@ -34,11 +34,18 @@ class QwenClient:
             async with asyncio.timeout(budget):
                 async with httpx.AsyncClient(transport=self.transport, follow_redirects=False) as client:
                     url = self.settings.completion_url.removesuffix('/chat/completions') + '/rerank'
-                    response = await client.post(url, headers={'Authorization': 'Bearer ' + self.settings.api_key},
-                        json={'model': self.settings.reranker_model, 'query': query,
-                              'documents': documents, 'top_n': count}, timeout=budget)
-                    response.raise_for_status()
-                    body = response.json()
+                    # Как и у генерации, ограничиваем размер ответа до JSON-разбора.
+                    async with client.stream('POST', url,
+                            headers={'Authorization': 'Bearer ' + self.settings.api_key},
+                            json={'model': self.settings.reranker_model, 'query': query,
+                                  'documents': documents, 'top_n': count}, timeout=budget) as response:
+                        response.raise_for_status()
+                        content = bytearray()
+                        async for part in response.aiter_bytes():
+                            if len(content) + len(part) > MAX_RESPONSE_BYTES:
+                                return []
+                            content.extend(part)
+                        body = json.loads(content)
                     entries = body.get('results', body.get('data'))
                     if not isinstance(entries, list):
                         return []

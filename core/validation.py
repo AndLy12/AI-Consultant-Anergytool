@@ -7,6 +7,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_valida
 from core_contract import CoreResponse, CoreUnavailable, ModelResponseError, Source
 from core.dialogue import search_intent, summary_excerpts, data_checklist_question
 from core.retrieval import tokens
+from core.config import redact_secret
 
 
 # Запрос на черновик распознаём по явному действию. Слово «итоговая»
@@ -34,8 +35,6 @@ EMBEDDED_QUESTION = re.compile(r'\b(?:уточните|подскажите|со
 INTERFACE_LABEL = re.compile(
     r'\b(?:кнопк\w*|раздел\w*|метк\w*|пункт\w*|поле|поля|надпис\w*)\s+'
     r'(?:«[^»\n]*»|"[^"\n]*"|“[^”\n]*”)', re.I)
-VISIBLE_SUMMARY = re.compile(
-    r'\b(?:резюме|черновик|сводка|итог|итоги)(?:[ \t]+[^:.!?\n]{1,60})?[ \t]*[:—-]', re.I)
 FREE_WORK = re.compile(
     r'\bбесплатн\w*\s+(?P<work>(?:(?:выездн\w*|энергетическ\w*|предварительн\w*)\s+)?'
     r'(?:обследован\w*|аудит\w*|монтаж\w*))', re.I)
@@ -59,6 +58,46 @@ def checklist_question_relevant(question: str, message: str, sources: list[Sourc
     subject = words(question) - generic
     context = words(message + '\n' + '\n'.join(source.excerpt for source in sources))
     return bool(subject.intersection(context))
+
+
+VISIBLE_SUMMARY = re.compile(
+    r'\b(?:резюме|черновик|сводка|итог|итоги)(?:[ \t]+[^:.!?\n]{1,60})?[ \t]*[:—-]', re.I)
+
+
+def _visible_summary_covers_draft(answer, draft):
+    """Не дублируем оформленное резюме, если оно покрывает актуальные выдержки.
+
+    Лексическое покрытие консервативно: оно не доказывает весь смысл пересказа.
+    Одного заголовка недостаточно, числа и оговорки должны оставаться в ответе.
+    """
+    if not VISIBLE_SUMMARY.search(answer):
+        return False
+    metadata = set(tokens('исправляю поправка уточняю уточнение'))
+    facts = set(tokens(draft)) - metadata
+    return bool(facts) and facts.issubset(tokens(answer))
+
+
+def _summary_excerpt_matches(line, texts):
+    """Дословность не позволяет отрезать цифру, единицу или оговорку величины.
+
+    Это локальная проверка границ выдержки, не доказательство всех смысловых
+    утверждений. При сомнении используется полный актуальный клиентский текст.
+    """
+    for text in texts:
+        for match in re.finditer(re.escape(line), text):
+            prefix, suffix = text[:match.start()], text[match.end():]
+            if ((prefix and re.match(r'\w', line) and re.search(r'\w$', prefix))
+                    or (suffix and re.search(r'\w$', line) and re.match(r'\w', suffix))):
+                continue
+            if re.match(r'\d', line) and re.search(
+                    r'(?:\d[ \u00a0]+|[.,+−-]|(?:около|примерно|от|до|не\s+'
+                    r'(?:менее|более|выше|ниже))\s+)$', prefix, re.I):
+                continue
+            if (re.search(r'(?:[км]вт|киловатт\w*|мегаватт\w*)$', line, re.I)
+                    and re.match(r'\s*[·⋅*-]?\s*(?:ч\b|час\w*)', suffix, re.I)):
+                continue
+            return True
+    return False
 
 
 def _negated_free_work(text, match):
@@ -134,6 +173,13 @@ class ModelSelection(BaseModel):
             raise ValueError('Цитаты слишком длинные')
         if any(not value.strip() or len(value) > 300 for value in self.missing_information):
             raise ValueError('Некорректное описание недостающих сведений')
+        # JSON допускает escape одиночного суррогата, который затем нельзя
+        # передать в UTF-8 или записать в CSV. Это ошибка ответа модели.
+        texts = [self.answer, self.question, self.summary_draft, *self.missing_information]
+        texts.extend(value for evidence in self.evidence for value in (evidence.chunk_id, evidence.quote))
+        for text in texts:
+            if text is not None:
+                text.encode('utf-8')
         return self
 
 
@@ -204,7 +250,7 @@ def assemble(raw, chunks, request, *, demo=False, truncated=False, secret='') ->
     if isinstance(raw, dict) and raw.get('summary_draft') is not None:
         draft = raw['summary_draft']
         verified = (isinstance(draft, str) and bool(draft.strip()) and len(draft) <= 3000
-                    and all(not line.strip() or any(line.strip() in text for text in summary_texts)
+                    and all(not line.strip() or _summary_excerpt_matches(line.strip(), summary_texts)
                             for line in draft.splitlines()))
         # После разрешения поправок даже дословный черновик модели может
         # содержать только мощность и пропустить исправленный объект/задачу.
@@ -345,9 +391,9 @@ def assemble(raw, chunks, request, *, demo=False, truncated=False, secret='') ->
             raise CoreUnavailable('Черновик содержит неподтверждённые сведения')
         # Конкурсный CSV содержит только answer. Явно заказанный черновик должен
         # быть виден и в нём; отдельное поле сохраняется для карточки backend.
-        # Уже сформулированное резюме может объединять исправления из истории.
-        # Не дублируем его сырыми выдержками с прежними значениями параметров.
-        if summary.strip() not in answer and not VISIBLE_SUMMARY.search(answer):
+        # Один заголовок «Резюме» не подтверждает наличие актуальных фактов.
+        # CSV экспортирует answer, поэтому сохраняем в нём проверенный черновик.
+        if summary.strip() not in answer and not _visible_summary_covers_draft(answer, summary):
             answer += '\n\nЧерновик по вашим сообщениям:\n' + summary.strip()
     warnings = []
     if grounding_adjusted:
@@ -360,6 +406,7 @@ def assemble(raw, chunks, request, *, demo=False, truncated=False, secret='') ->
     result = CoreResponse(answer=answer, sources=sources, action=action, summary_draft=summary,
                           core_status=selected.status, missing_information=selected.missing_information,
                           warnings=warnings)
-    if secret and secret in result.model_dump_json():
+    values = result.model_dump()
+    if secret and redact_secret(values, secret) != values:
         raise CoreUnavailable('Ответ отклонён проверкой конфиденциальности')
     return result

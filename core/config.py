@@ -19,6 +19,23 @@ def first_env(*names: str) -> str:
     return ''
 
 
+def redact_secret(value, secret):
+    """Удаляем серверный секрет из значений до JSON-экранирования.
+
+    Структурные имена полей не являются пользовательскими данными. Функция
+    возвращает копию, поэтому общие документы и история клиента не изменяются.
+    """
+    if not secret:
+        return value
+    if isinstance(value, str):
+        return value.replace(secret, '[секрет удалён]')
+    if isinstance(value, list):
+        return [redact_secret(item, secret) for item in value]
+    if isinstance(value, dict):
+        return {key: redact_secret(item, secret) for key, item in value.items()}
+    return value
+
+
 def number(name: str, default: str, minimum: float, maximum: float, integer=False):
     """Ошибку конфигурации показываем по имени поля, не раскрывая его значение."""
     try:
@@ -26,7 +43,7 @@ def number(name: str, default: str, minimum: float, maximum: float, integer=Fals
         if not math.isfinite(value) or not minimum <= value <= maximum:
             raise ValueError
         return value
-    except ValueError:
+    except (ValueError, OverflowError):
         raise CoreUnavailable(f'Некорректная настройка {name}') from None
 
 
@@ -51,6 +68,25 @@ class Settings:
     max_workers: int = 4
     reranker_model: str = ''
     review_answers: bool = True
+
+    def __post_init__(self):
+        """Проверяем лимиты и при прямом создании, не только из окружения.
+
+        Малые положительные бюджеты допустимы для вложенных вызовов и тестов.
+        Нулевой семафор, отрицательные повторы и нечисловой дедлайн недопустимы.
+        """
+        integer_fields = ('max_tokens', 'top_k', 'chunk_chars', 'context_chars',
+                          'history_chars', 'max_workers', 'retries')
+        for name in integer_fields:
+            value = getattr(self, name)
+            minimum = 0 if name == 'retries' else 1
+            if type(value) is not int or value < minimum:
+                raise CoreUnavailable(f'Некорректная настройка {name}')
+        for name in ('temperature', 'request_seconds', 'network_seconds'):
+            value = getattr(self, name)
+            if (type(value) not in {int, float} or not math.isfinite(value)
+                    or (value < 0 if name == 'temperature' else value <= 0)):
+                raise CoreUnavailable(f'Некорректная настройка {name}')
 
     @classmethod
     def from_environment(cls):
@@ -98,7 +134,7 @@ class Settings:
             port = url.port
             valid = (url.scheme in {'http', 'https'} and url.hostname and port != 0 and not url.username
                      and not url.password and not url.query and not url.fragment)
-            if not valid or any(c in self.api_key for c in '\r\n'):
+            if not valid or any(not 33 <= ord(c) <= 126 for c in self.api_key):
                 raise ValueError
         except ValueError:
             raise CoreUnavailable('Некорректная конфигурация провайдера') from None

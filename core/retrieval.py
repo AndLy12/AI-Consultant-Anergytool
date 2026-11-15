@@ -64,14 +64,30 @@ CATEGORY_WORDS = tuple(tokens(word)[0] for word in
                        ('первая', 'вторая', 'третья', 'четвертая', 'пятая', 'шестая'))
 
 
+def _category_mentions(text):
+    """Сохраняем порядок названных категорий и прямое отрицание каждой."""
+    mentions = []
+    for match in TOKEN.finditer(text):
+        word = tokens(match[0])
+        if word and word[0] in CATEGORY_WORDS:
+            mentions.append((match.start(), word[0]))
+    for match in re.finditer(r'\b([1-6])\s*-?\s*(?:я|й|ая|ой|ую)\b', text, re.I):
+        mentions.append((match.start(), CATEGORY_WORDS[int(match[1]) - 1]))
+    if text.strip() in {'1', '2', '3', '4', '5', '6'}:
+        mentions.append((0, CATEGORY_WORDS[int(text.strip()) - 1]))
+    return [(category, not re.search(r'\bне\s+$', text[:start], re.I))
+            for start, category in sorted(mentions)]
+
+
 def price_category(text):
-    """Связываем словесную категорию и форму «4-я» с заголовком исходного абзаца."""
-    words = [word for word in tokens(text) if word in CATEGORY_WORDS]
-    if words:
-        return words[-1]
-    numbers = re.findall(r'\b([1-6])\s*-?\s*(?:я|й|ая|ой|ую)\b', text, re.I)
-    number = numbers[-1] if numbers else text.strip()
-    return CATEGORY_WORDS[int(number) - 1] if number in {'1', '2', '3', '4', '5', '6'} else None
+    """Выбираем последнюю не отвергнутую категорию, сохраняя формы «4-я» и «4»."""
+    rejected = set()
+    for category, enabled in reversed(_category_mentions(text)):
+        if not enabled:
+            rejected.add(category)
+        elif category not in rejected:
+            return category
+    return None
 
 
 @dataclass(frozen=True)
@@ -274,8 +290,14 @@ class SearchIndex:
                     # чем у обзорного раздела. Явно названная категория имеет
                     # приоритет; цифры и условия берём из исходного текста.
                     category = None
+                    rejected = set()
                     for text in [request.message] + [h.content for h in reversed(request.history) if h.role == 'user']:
-                        category = price_category(text)
+                        for candidate, enabled in reversed(_category_mentions(text)):
+                            if not enabled:
+                                rejected.add(candidate)
+                            elif candidate not in rejected:
+                                category = candidate
+                                break
                         if category:
                             break
                     for chunk in self.chunks if category else ():

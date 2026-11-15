@@ -5,6 +5,7 @@
 
 import json
 import re
+from core.config import redact_secret
 from core.dialogue import (load_profile_question, data_checklist_question,
                           data_sufficiency_question, search_intent, PREPARATION_SECTIONS)
 
@@ -98,10 +99,9 @@ def build_messages(request, history, chunks, secret=''):
         # одно место в начале контекста не мешало выбирать общую справку вместо него.
         content['required_checklists'] = [f'D{i}' for i, chunk in enumerate(chunks, 1)
                                            if (chunk.section or '').lower() in PREPARATION_SECTIONS.values()]
-    data = json.dumps(content, ensure_ascii=False)
-    # Даже случайно вставленный в документ или сообщение действующий ключ не передаём модели.
-    if secret:
-        data = data.replace(secret, '[секрет удалён]')
+    # Проверяем значения до сериализации: кавычки и обратные слеши в ключе
+    # экранируются JSON и не совпадают с поиском по готовой JSON-строке.
+    data = json.dumps(redact_secret(content, secret), ensure_ascii=False)
     instruction = SYSTEM_PROMPT
     if corrections:
         instruction += ('\nВ client_corrections отдельно выделены дословные поправки пользователя. '

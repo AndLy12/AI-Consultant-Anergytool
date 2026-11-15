@@ -42,27 +42,52 @@ def clean_text(text: str) -> str:
     return text.replace('\r\n', '\n').replace('\r', '\n').replace('\x00', '').replace('\u00a0', ' ').strip()
 
 
+def _markdown_headings(text):
+    """Сопоставляем заголовки с исходными смещениями, пропуская блоки кода."""
+    headings = {}
+    fence = None
+    offset = 0
+    for line in text.splitlines(keepends=True):
+        marker = re.match(r'^ {0,3}(`{3,}|~{3,})(.*)$', line.rstrip('\r\n'))
+        if fence:
+            if (marker and marker[1][0] == fence[0] and len(marker[1]) >= fence[1]
+                    and not marker[2].strip()):
+                fence = None
+        elif marker:
+            fence = (marker[1][0], len(marker[1]))
+        else:
+            heading = re.match(r'^(#{1,6})[ \t]+([^\n]+)', line)
+            if heading:
+                headings[offset] = heading
+        offset += len(line)
+    return headings
+
+
 def make_chunks(name: str, blocks: list[tuple[str, str | None, int | None]], size: int) -> list[Chunk]:
     """Сохраняем координаты и иерархию разделов; оформление без данных не индексируем.
 
     Строки таблиц с буквами или числами остаются, даже если окружены дефисами.
     Иерархия нужна поиску, чтобы вернуть условия из родительского раздела.
     """
+    if type(size) is not int or size <= 0:
+        raise ValueError('Размер фрагмента должен быть положительным целым числом')
     digest = hashlib.sha256((name + '\n' + '\n'.join(b[0] for b in blocks)).encode()).hexdigest()[:20]
     doc_id = 'doc-' + digest
     title = Path(name).stem[:500] or 'Документ'
-    if Path(name).suffix.lower() == '.md':
-        heading = re.search(r'(?m)^#\s+([^\n]+)', '\n'.join(b[0] for b in blocks))
-        if heading:
-            title = heading[1].strip()[:500]
+    prepared = [(clean_text(raw), section, page) for raw, section, page in blocks]
+    is_markdown = Path(name).suffix.lower() == '.md'
+    headings = [_markdown_headings(text) if is_markdown else None for text, _, _ in prepared]
+    if is_markdown:
+        title = next((match[2].strip()[:500] for mapping in headings
+                      for match in mapping.values() if len(match[1]) == 1), title)
     chunks = []
-    for block_index, (raw, initial_section, page) in enumerate(blocks):
-        text = clean_text(raw)
+    for block_index, (text, initial_section, page) in enumerate(prepared):
         section = initial_section
         section_path = [initial_section] if initial_section else []
         for paragraph in re.finditer(r'\S[\s\S]*?(?=\n\s*\n|\n(?=#{1,6}[ \t]+)|\Z)', text):
             paragraph_text = paragraph.group().strip()
-            match = re.match(r'^(#{1,6})\s+([^\n]+)', paragraph_text)
+            match = (headings[block_index].get(paragraph.start()) if is_markdown
+                     else re.match(r'^(#{1,6})\s+([^\n]+)', paragraph_text))
             if match:
                 heading, _, rest = paragraph_text.partition('\n')
                 section = heading.lstrip('#').strip()[:500]
@@ -155,6 +180,10 @@ def read_blocks(name: str, content: bytes):
             raise ValueError
         if sum(len(b[0]) for b in blocks) > MAX_TEXT_CHARS:
             raise ValueError
+        # Экранированный одиночный суррогат в JSON не является корректным
+        # текстом UTF-8. Отклоняем его здесь с безопасной ошибкой парсера.
+        for text, _, _ in blocks:
+            text.encode('utf-8')
         return blocks
     except Exception:
         # В исключении парсера могут быть фрагменты закрытого документа.
