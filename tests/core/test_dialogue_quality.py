@@ -405,3 +405,27 @@ def test_modal_card_opt_out_is_respected(message):
     request = CoreRequest(message=message, history=[
         {'role': 'user', 'content': 'Объект — склад, мощность 900 кВт.'}])
     assert assemble({'status': 'insufficient_data'}, (), request).summary_draft is None
+
+
+@pytest.mark.parametrize("number", ["9" * 4000, "999 " * 2000])
+def test_long_number_without_unit_does_not_block_summary_parser(number):
+    """Число без единицы не должно запускать повторный поиск каждого суффикса."""
+    import time
+    from core.dialogue import summary_excerpts
+    text = 'Исправляю: ' + number + ' без единицы измерения.'
+    started = time.monotonic()
+    result = summary_excerpts([text])
+    elapsed = time.monotonic() - started
+    assert elapsed < 0.5
+    assert ''.join(result).count('9') == number.count('9')
+
+
+@pytest.mark.parametrize('value', ['1 200', '1\u00a0200', '1200,5', '1200.5'])
+def test_number_scan_optimization_preserves_valid_power_corrections(value):
+    """Граница числа сохраняет целые разряды и десятичную часть вместе с единицей."""
+    request = CoreRequest(message='Подготовь резюме.', history=[
+        {'role': 'user', 'content': 'Мощность 600 кВт.'},
+        {'role': 'user', 'content': f'Исправляю: мощность {value} кВт.'}])
+    draft = assemble({'status': 'insufficient_data'}, (), request).summary_draft
+    assert value + ' кВт' in draft
+    assert '600' not in draft
