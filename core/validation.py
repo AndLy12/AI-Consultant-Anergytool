@@ -5,7 +5,7 @@ from copy import deepcopy
 import re
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 from core_contract import CoreResponse, CoreUnavailable, ModelResponseError, Source
-from core.dialogue import search_intent, summary_excerpts, data_checklist_question
+from core.dialogue import search_intent, summary_excerpts
 
 
 # Запрос на черновик распознаём по явному действию. Слово «итоговая»
@@ -252,8 +252,9 @@ def assemble(raw, chunks, request, *, demo=False, truncated=False, secret='') ->
                     sources.append(Source(document_id=condition.document_id, chunk_id=condition.chunk_id,
                         title=condition.title, excerpt=condition.text, section=condition.section, page=condition.page))
                     seen.add(condition.chunk_id)
+        # Перечень данных не запрещает полезный следующий вопрос. Повторы
+        # отсекаем по самому ответу, а не по общему типу запроса клиента.
         if (selected.question and not had_question
-                and not data_checklist_question(request.message)
                 and not EMBEDDED_QUESTION.search(answer) and selected.question.strip() not in answer):
             answer += '\n\n' + selected.question.strip()
         def hide_aliases(match):

@@ -107,9 +107,12 @@ class EnergytoolCore:
                     except ModelResponseError:
                         if attempt == 1 or time.monotonic() >= limit:
                             raise
+                        # Исправление JSON не должно заставлять модель снова
+                        # выбрасывать существенные условия ради краткости.
                         messages = [dict(messages[0], content=messages[0]['content'] +
                             '\nПредыдущая попытка не прошла проверку. Верни только JSON по схеме. '
-                            'Для answered обязательны короткий answer и evidence с существующими '
+                            'Для answered обязательны answer с выводом и существенными условиями '
+                            'и evidence с существующими '
                             'короткими ID из documents. Не добавляй поля. '
                             'При отсутствии основания используй insufficient_data.'), messages[1]]
                 timings['generation'] = time.monotonic() - generation_started

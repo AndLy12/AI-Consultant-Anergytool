@@ -228,7 +228,6 @@ class SearchIndex:
         anchor_ids = {h.chunk.chunk_id for h in anchors}
         ranked = anchors + tuple(h for h in ranked if h.chunk.chunk_id not in anchor_ids)
         hits = ranked[:top_k]
-        checklist_found = False
         planning = (data_checklist_question(request.message)
                     or data_sufficiency_question(request.message))
         titles = intent.active
@@ -257,7 +256,6 @@ class SearchIndex:
                         # Для смешанного сбора сохраняем оба списка подготовки.
                         primary = [Hit(h.chunk, h.score, True) for h in guidance] + [
                             h for h in primary if h not in guidance]
-                        checklist_found = True
                 if ('солнечные электростанции' in titles
                         and load_profile_question(request.message)):
                     # Дневная выработка и вечерняя нагрузка сформулированы
@@ -285,9 +283,11 @@ class SearchIndex:
                                 h for h in primary if h.chunk.chunk_id != chunk.chunk_id]
                             break
                 ids = {h.chunk.chunk_id for h in primary}
-                remaining = [h for h in hits if h.chunk.chunk_id not in ids and not (
-                    checklist_found and h.chunk.title.lower() in {
-                        'общие вопросы', 'обзор продуктов: что подходит под вашу задачу'})]
+                # Список подготовки остаётся первым, но не отменяет другие
+                # вопросы той же реплики. Общий раздел может содержать ответ
+                # о контактах или порядке консультации; оставляем его по BM25,
+                # а продуктовые исключения уже проверены выше через allowed.
+                remaining = [h for h in hits if h.chunk.chunk_id not in ids]
                 return tuple((list(anchors) + [
                     h for h in primary + remaining if h.chunk.chunk_id not in anchor_ids])[:top_k])
         return hits
