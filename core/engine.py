@@ -129,7 +129,7 @@ class EnergytoolCore:
                         review_limit = time.monotonic() + min(35, remaining / 2)
                         try:
                             reviewer = getattr(self.client, 'review', self.client.complete)
-                            checked = reviewer(build_review_messages(messages, raw), review_limit)
+                            checked = reviewer(build_review_messages(messages, raw, self.settings.api_key), review_limit)
                             final = checked.get('result', checked)
                             if isinstance(final, dict) and final.get('status') == 'answered' and checked.get('follow_up_question'):
                                 final = dict(final, question=checked['follow_up_question'])

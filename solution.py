@@ -14,6 +14,7 @@ from consultant_core import create_core
 from core_contract import CoreUnavailable, ModelResponseError
 from core.config import Settings as CoreSettings, first_env
 from core.dialogue import parse_question
+from core.documents import csv_field_limit
 
 TECHNICAL_ANSWER = ('Не удалось завершить обработку из-за технического ограничения. '
                     'Это не означает, что в базе нет ответа; повторите запрос после устранения сбоя.')
@@ -68,8 +69,7 @@ class Settings:
 
 def load_questions(path: Path) -> list[Question]:
     """CSV-экранирование сохраняет многострочный диалог внутри одного теста."""
-    csv.field_size_limit(1_000_000)
-    with path.open(encoding='utf-8-sig', newline='') as stream:
+    with csv_field_limit(1_000_000), path.open(encoding='utf-8-sig', newline='') as stream:
         reader = csv.DictReader(stream)
         if not reader.fieldnames or len(reader.fieldnames) != 2 or set(reader.fieldnames) != {'id', 'question'}:
             raise ValueError('Ожидаются ровно id,question')
@@ -116,7 +116,7 @@ def write_submission(path: Path, rows):
 def validate_submission(questions_path: Path, output_path: Path):
     """Проверка формата не является оценкой достоверности ответов."""
     expected = [row.id for row in load_questions(questions_path)]
-    with output_path.open(encoding='utf-8', newline='') as stream:
+    with csv_field_limit(1_000_000), output_path.open(encoding='utf-8', newline='') as stream:
         reader = csv.DictReader(stream)
         if reader.fieldnames != ['id', 'answer']:
             raise ValueError('Ожидаются ровно колонки id,answer')

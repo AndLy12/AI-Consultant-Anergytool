@@ -60,7 +60,7 @@ class QwenClient:
                     return indices
         try:
             return asyncio.run(request())
-        except (TimeoutError, httpx.HTTPError, ValueError, AttributeError):
+        except (TimeoutError, httpx.HTTPError, ValueError, AttributeError, RecursionError):
             return []
 
     def complete(self, messages: list[dict], deadline: float, *, response_schema=None) -> dict:
@@ -100,8 +100,10 @@ class QwenClient:
             async with httpx.AsyncClient(transport=self.transport, follow_redirects=False) as client:
                 return await self._complete(client, messages, response_schema)
 
-    async def _complete(self, client, messages, response_schema=None):
+    async def _complete(self, client, messages, response_schema=None, *, retry_budget=None):
         """Клиент не хранит пользовательскую историю после завершения запроса."""
+        if retry_budget is None:
+            retry_budget = self.settings.retries
         payload = {'model': self.settings.model, 'messages': messages,
                    'temperature': self.settings.temperature, 'max_tokens': self.settings.max_tokens}
         if self.use_thinking_option:
@@ -115,7 +117,7 @@ class QwenClient:
                     'name': 'response', 'strict': False,
                     'schema': generation_schema() if response_schema is None else response_schema}
 
-        for attempt in range(self.settings.retries + 1):
+        for attempt in range(retry_budget + 1):
             try:
                 async with client.stream(
                     'POST', self.settings.completion_url,
@@ -176,10 +178,13 @@ class QwenClient:
                         else:
                             setattr(self, flag, False)
                         await response.aclose()
-                        return await self._complete(client, messages, response_schema)
+                        # Согласование формата не возвращает уже потраченные сетевые
+                        # повторы. Все ветки остаются под исходным общим дедлайном.
+                        return await self._complete(client, messages, response_schema,
+                                                    retry_budget=retry_budget - attempt)
                     if response.status_code in {401, 403}:
                         raise ProviderError('access_denied', 'API отклонил доступ; проверьте ключ с владельцем API')
-                    retryable = response.status_code == 429 or response.status_code >= 500
+                    retryable = response.status_code == 429 or 500 <= response.status_code <= 599
                     category = 'rate_limit' if response.status_code == 429 else 'upstream_5xx'
                     if not retryable:
                         if response.status_code != 200:
@@ -231,7 +236,7 @@ class QwenClient:
             except httpx.TransportError as exc:
                 retryable = True
                 category = 'timeout' if isinstance(exc, httpx.TimeoutException) else 'network'
-            if not retryable or attempt >= self.settings.retries:
+            if not retryable or attempt >= retry_budget:
                 raise ProviderError(category, 'API модели временно недоступен')
             delay = min(.5 * 2 ** attempt, 2)
             await asyncio.sleep(delay)

@@ -64,15 +64,22 @@ CATEGORY_WORDS = tuple(tokens(word)[0] for word in
                        ('первая', 'вторая', 'третья', 'четвертая', 'пятая', 'шестая'))
 
 
+# Порядковый номер площадки/объекта не определяет ценовую категорию клиента.
+CATEGORY_OBJECT = re.compile(
+    r'\s+(?:объект|площадк|склад|цех|этап|очеред|половин|прибор|сч[её]тчик|'
+    r'здани|корпус|фаз|тарифн\w*\s+зон)', re.I)
+
+
 def _category_mentions(text):
     """Сохраняем порядок названных категорий и прямое отрицание каждой."""
     mentions = []
     for match in TOKEN.finditer(text):
         word = tokens(match[0])
-        if word and word[0] in CATEGORY_WORDS:
+        if word and word[0] in CATEGORY_WORDS and not CATEGORY_OBJECT.match(text[match.end():]):
             mentions.append((match.start(), word[0]))
     for match in re.finditer(r'\b([1-6])\s*-?\s*(?:я|й|ая|ой|ую)\b', text, re.I):
-        mentions.append((match.start(), CATEGORY_WORDS[int(match[1]) - 1]))
+        if not CATEGORY_OBJECT.match(text[match.end():]):
+            mentions.append((match.start(), CATEGORY_WORDS[int(match[1]) - 1]))
     if text.strip() in {'1', '2', '3', '4', '5', '6'}:
         mentions.append((0, CATEGORY_WORDS[int(text.strip()) - 1]))
     return [(category, not re.search(r'\bне\s+$', text[:start], re.I))

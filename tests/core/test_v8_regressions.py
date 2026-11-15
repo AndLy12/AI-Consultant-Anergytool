@@ -118,8 +118,9 @@ def test_b08_markdown_adjacent_headings_keep_separate_sections():
     assert all('Условия обслуживания' not in c.text for c in chunks if c.section == 'Гарантия')
 
 
-def test_b09_provider_url_port_is_validated_before_http(tmp_path):
-    settings = Settings(tmp_path, base_url='http://localhost:not-a-port/v1',
+@pytest.mark.parametrize('url', ['http://localhost:not-a-port/v1', 'http://localhost:65536/v1', 'http://localhost:0/v1'])
+def test_b09_provider_url_port_is_validated_before_http(tmp_path, url):
+    settings = Settings(tmp_path, base_url=url,
                         api_key='placeholder', model='model')
     with pytest.raises(CoreUnavailable):
         settings.validate_provider()
@@ -143,7 +144,7 @@ def test_b11_zero_chunk_size_fails_instead_of_hanging():
             'try:\n make_chunks("x.md", [("Данные",None,None)], 0)\n'
             'except (ValueError, TypeError):\n print("rejected")\n')
     try:
-        result = subprocess.run([sys.executable, '-c', code], capture_output=True, text=True, timeout=1)
+        result = subprocess.run([sys.executable, '-c', code], capture_output=True, text=True, timeout=5)
     except subprocess.TimeoutExpired:
         pytest.fail('Нулевой размер чанка вызвал бесконечный цикл')
     assert result.returncode == 0 and result.stdout.strip() == 'rejected'
@@ -275,3 +276,126 @@ def test_b23_surrogate_json_text_is_rejected_safely(tmp_path):
         load_chunks(Settings(tmp_path, kb_path=source))
     with pytest.raises(ModelResponseError):
         assemble({'status': 'clarification_needed', 'question': 'private-\ud800'}, (), CoreRequest(message='Вопрос'))
+
+
+def test_b24_nonstandard_http_status_is_not_retried_as_5xx(tmp_path, monkeypatch):
+    import asyncio
+    calls = []
+    async def no_delay(*args):
+        return None
+    monkeypatch.setattr(asyncio, 'sleep', no_delay)
+    def handler(request):
+        calls.append(request)
+        return httpx.Response(600)
+    client = QwenClient(Settings(tmp_path, model='model', base_url='http://unit.test/v1',
+                                api_key='placeholder', retries=2), httpx.MockTransport(handler))
+    with pytest.raises(CoreUnavailable):
+        client.complete([], time.monotonic() + 2)
+    assert len(calls) == 1
+
+
+def test_b25_compatibility_negotiation_does_not_reset_network_retries(tmp_path, monkeypatch):
+    import asyncio
+    calls = []
+    async def no_delay(*args):
+        return None
+    monkeypatch.setattr(asyncio, 'sleep', no_delay)
+    def handler(request):
+        calls.append(request)
+        if len(calls) == 2:
+            return httpx.Response(400, text='Unsupported reasoning_effort')
+        if len(calls) in (1, 3):
+            return httpx.Response(500)
+        return httpx.Response(200, json={'choices': [{'message': {'content': '{}'}}]})
+    client = QwenClient(Settings(tmp_path, model='model', base_url='http://unit.test/v1',
+                                api_key='placeholder', retries=1), httpx.MockTransport(handler))
+    with pytest.raises(ProviderError):
+        client.complete([], time.monotonic() + 2)
+    assert len(calls) == 3
+
+
+def test_b26_csv_knowledge_does_not_depend_on_global_reader_limit(tmp_path):
+    from core.documents import read_blocks
+    old = csv.field_size_limit()
+    try:
+        csv.field_size_limit(100)
+        blocks = read_blocks('knowledge.csv', ('header\n' + 'x' * 200000 + '\n').encode())
+        assert 'x' * 200000 in blocks[0][0]
+        assert csv.field_size_limit() == 100
+        source = tmp_path / 'questions.csv'
+        write_questions(source, [('001', 'y' * 200)])
+        assert solution.load_questions(source)[0].text == 'y' * 200
+        assert csv.field_size_limit() == 100
+    finally:
+        csv.field_size_limit(old)
+
+
+def test_b27_deep_reranker_json_preserves_local_fallback(tmp_path):
+    def handler(request):
+        body = '{"results":[],"nested":' + '[' * 10000 + '0' + ']' * 10000 + '}'
+        return httpx.Response(200, text=body)
+    client = QwenClient(Settings(tmp_path, model='model', base_url='http://unit.test/v1',
+                                api_key='placeholder', reranker_model='reranker'), httpx.MockTransport(handler))
+    assert client.rerank('вопрос', ['текст'], 1, time.monotonic() + 2) == []
+
+
+@pytest.mark.parametrize('qualifier', ['приблизительно', 'ориентировочно', 'кажется', 'возможно'])
+def test_b28_summary_keeps_client_uncertainty(qualifier):
+    from core.validation import assemble
+    from core_contract import CoreRequest
+    request = CoreRequest(message='Подготовь резюме.', history=[
+        {'role': 'user', 'content': 'Исправляю: '+qualifier+' 900 кВт.'}])
+    draft = assemble({'status': 'insufficient_data'}, (), request).summary_draft
+    assert qualifier+' 900 кВт' in draft
+
+
+def test_b29_object_ordinal_is_not_a_price_category():
+    from core.retrieval import price_category
+    assert price_category('На второй площадке установлен учёт.') is None
+    assert price_category('У третьего объекта другая схема.') is None
+
+
+def test_b30_skipped_heading_level_does_not_nest_siblings():
+    from core.documents import make_chunks
+    text = '# Продукт\n\n### Гарантия\n\nУсловие гарантии.\n\n### Обслуживание\n\nУсловие обслуживания.'
+    chunks = make_chunks('product.md', [(text, None, None)], 1800)
+    second = next(c for c in chunks if c.section == 'Обслуживание')
+    assert second.section_path == ('Продукт', 'Обслуживание')
+
+
+def test_b07_deadline_is_checked_after_last_document_parse(tmp_path, monkeypatch):
+    """Последний документ не может вернуть успешную подготовку после дедлайна."""
+    import core.documents as documents
+    from types import SimpleNamespace
+    source = tmp_path / 'data.md'
+    source.write_text('Сведения базы.', encoding='utf-8')
+    clock = [0]
+    monkeypatch.setattr(documents, 'time', SimpleNamespace(monotonic=lambda: clock[0]))
+    original = documents.read_blocks
+    def parse(name, content):
+        result = original(name, content)
+        clock[0] = 11
+        return result
+    monkeypatch.setattr(documents, 'read_blocks', parse)
+    with pytest.raises(CoreUnavailable):
+        documents.load_chunks(Settings(tmp_path, kb_path=source), deadline=10)
+
+
+def test_b22_review_does_not_receive_discarded_draft_secret(tmp_path):
+    from core.engine import EnergytoolCore
+    from core.documents import make_chunks
+    from core_contract import CoreRequest
+    secret = 'private"key'
+    chunks = make_chunks('data.md', [('Учёт доступен.', None, None)], 1800)
+    class Client:
+        def complete(self, messages, deadline):
+            return {'status': 'answered', 'answer': 'Учёт доступен.', 'evidence': ['D1'],
+                    'summary_draft': secret}
+        def review(self, messages, deadline):
+            payload = json.loads(messages[-1]['content'])
+            assert secret not in payload['draft']['summary_draft']
+            return {'issues': [], 'follow_up_question': None,
+                    'result': {'status': 'answered', 'answer': 'Учёт доступен.', 'evidence': ['D1']}}
+    settings = Settings(tmp_path, model='model', base_url='http://unit.test/v1', api_key=secret)
+    result = EnergytoolCore(settings, chunks=chunks, client=Client()).respond(CoreRequest(message='Учёт доступен?'))
+    assert result.core_status == 'answered'

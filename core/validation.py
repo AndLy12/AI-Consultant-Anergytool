@@ -5,7 +5,7 @@ from copy import deepcopy
 import re
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 from core_contract import CoreResponse, CoreUnavailable, ModelResponseError, Source
-from core.dialogue import search_intent, summary_excerpts, data_checklist_question
+from core.dialogue import search_intent, summary_excerpts, data_checklist_question, APPROXIMATION
 from core.retrieval import tokens
 from core.config import redact_secret
 
@@ -90,7 +90,7 @@ def _summary_excerpt_matches(line, texts):
                     or (suffix and re.search(r'\w$', line) and re.match(r'\w', suffix))):
                 continue
             if re.match(r'\d', line) and re.search(
-                    r'(?:\d[ \u00a0]+|[.,+−-]|(?:около|примерно|от|до|не\s+'
+                    r'(?:\d[ \u00a0]+|[.,+−-]|(?:' + APPROXIMATION + r'|от|до|не\s+'
                     r'(?:менее|более|выше|ниже))\s+)$', prefix, re.I):
                 continue
             if (re.search(r'(?:[км]вт|киловатт\w*|мегаватт\w*)$', line, re.I)
@@ -406,7 +406,8 @@ def assemble(raw, chunks, request, *, demo=False, truncated=False, secret='') ->
     result = CoreResponse(answer=answer, sources=sources, action=action, summary_draft=summary,
                           core_status=selected.status, missing_information=selected.missing_information,
                           warnings=warnings)
-    values = result.model_dump()
-    if secret and redact_secret(values, secret) != values:
-        raise CoreUnavailable('Ответ отклонён проверкой конфиденциальности')
+    if secret:
+        values = result.model_dump()
+        if redact_secret(values, secret) != values:
+            raise CoreUnavailable('Ответ отклонён проверкой конфиденциальности')
     return result

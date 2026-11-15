@@ -1,6 +1,8 @@
 """Чтение закрытой базы без публикации файлов и разбиение с координатами источника."""
 
 from dataclasses import dataclass
+from contextlib import contextmanager
+from threading import RLock
 import csv
 import hashlib
 import io
@@ -20,6 +22,21 @@ MAX_FILES = 2000
 MAX_TEXT_CHARS = 12_000_000
 MAX_TOTAL_TEXT_CHARS = 24_000_000
 MAX_CHUNKS = 50000
+
+
+_CSV_LIMIT_LOCK = RLock()
+
+
+@contextmanager
+def csv_field_limit(limit):
+    """Ограничение csv глобально для процесса: меняем и восстанавливаем под замком."""
+    with _CSV_LIMIT_LOCK:
+        previous = csv.field_size_limit()
+        csv.field_size_limit(limit)
+        try:
+            yield
+        finally:
+            csv.field_size_limit(previous)
 
 
 @dataclass(frozen=True)
@@ -84,6 +101,7 @@ def make_chunks(name: str, blocks: list[tuple[str, str | None, int | None]], siz
     for block_index, (text, initial_section, page) in enumerate(prepared):
         section = initial_section
         section_path = [initial_section] if initial_section else []
+        section_levels = [1] if initial_section else []
         for paragraph in re.finditer(r'\S[\s\S]*?(?=\n\s*\n|\n(?=#{1,6}[ \t]+)|\Z)', text):
             paragraph_text = paragraph.group().strip()
             match = (headings[block_index].get(paragraph.start()) if is_markdown
@@ -91,7 +109,14 @@ def make_chunks(name: str, blocks: list[tuple[str, str | None, int | None]], siz
             if match:
                 heading, _, rest = paragraph_text.partition('\n')
                 section = heading.lstrip('#').strip()[:500]
-                section_path = section_path[:len(match[1]) - 1] + [section]
+                # Глубина определяется уровнем Markdown, а не числом уже
+                # встреченных заголовков: H1 → H3 → H3 содержит соседние H3.
+                level = len(match[1])
+                while section_levels and section_levels[-1] >= level:
+                    section_levels.pop()
+                    section_path.pop()
+                section_levels.append(level)
+                section_path.append(section)
                 if not rest.strip():
                     continue
             start = paragraph.start()
@@ -133,7 +158,8 @@ def read_blocks(name: str, content: bytes):
             if suffix == '.json':
                 text = _flatten_json(json.loads(text))
             elif suffix == '.csv':
-                rows = list(csv.reader(io.StringIO(text)))
+                with csv_field_limit(MAX_TEXT_CHARS):
+                    rows = list(csv.reader(io.StringIO(text)))
                 if not rows:
                     raise ValueError
                 header = rows[0]

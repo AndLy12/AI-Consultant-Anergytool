@@ -149,10 +149,12 @@ def build_messages(request, history, chunks, secret=''):
     return [{'role': 'system', 'content': instruction}, {'role': 'user', 'content': data}]
 
 
-def build_review_messages(messages, draft):
+def build_review_messages(messages, draft, secret=''):
     """Вторая проверка использует те же документы и историю, без эталонных ответов."""
     payload = json.loads(messages[1]['content'])
-    payload['draft'] = draft
+    # Модель могла добавить непрошеный черновик, отброшенный assemble.
+    # Очищаем также эти исходные поля перед передачей редактору.
+    payload['draft'] = redact_secret(draft, secret)
     # Общие правила уже находятся в messages[0]. Повторение их полным списком
     # переполняло контекст review при валидном исходном запросе (8192 токена).
     # Здесь остаются только задача редактора и формат проверочного результата.
