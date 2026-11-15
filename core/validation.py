@@ -5,7 +5,8 @@ from copy import deepcopy
 import re
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 from core_contract import CoreResponse, CoreUnavailable, ModelResponseError, Source
-from core.dialogue import search_intent, summary_excerpts
+from core.dialogue import search_intent, summary_excerpts, data_checklist_question
+from core.retrieval import tokens
 
 
 # Запрос на черновик распознаём по явному действию. Слово «итоговая»
@@ -33,6 +34,24 @@ VISIBLE_SUMMARY = re.compile(
 FREE_WORK = re.compile(
     r'\bбесплатн\w*\s+(?P<work>(?:(?:выездн\w*|энергетическ\w*|предварительн\w*)\s+)?'
     r'(?:обследован\w*|аудит\w*|монтаж\w*))', re.I)
+
+
+def checklist_question_relevant(question: str, message: str, sources: list[Source]) -> bool:
+    """Отдельное уточнение после списка должно иметь предмет в запросе или цитатах.
+
+    Это консервативный лексический фильтр, а не проверка смысла вопроса моделью.
+    Общие слова «объект» и «данные» не доказывают полезность нового параметра.
+    Используем нормализацию поиска, сохраняя общие термины и единицы одинаковыми.
+    """
+    def words(text):
+        text = re.sub(r'\bсч[её]тчик\w*', 'прибор', text, flags=re.I)
+        return set(tokens(text))
+
+    generic = words('какой какая какие какова каковы сколько объект данные параметры '
+                    'уточните сообщите подскажите назовите пожалуйста уже установлен')
+    subject = words(question) - generic
+    context = words(message + '\n' + '\n'.join(source.excerpt for source in sources))
+    return bool(subject.intersection(context))
 
 
 def _negated_free_work(text, match):
@@ -252,9 +271,11 @@ def assemble(raw, chunks, request, *, demo=False, truncated=False, secret='') ->
                     sources.append(Source(document_id=condition.document_id, chunk_id=condition.chunk_id,
                         title=condition.title, excerpt=condition.text, section=condition.section, page=condition.page))
                     seen.add(condition.chunk_id)
-        # Перечень данных не запрещает полезный следующий вопрос. Повторы
-        # отсекаем по самому ответу, а не по общему типу запроса клиента.
+        # Перечень данных не запрещает полезный следующий вопрос, но сам
+        # по себе не оправдывает сбор произвольных параметров другого этапа.
         if (selected.question and not had_question
+                and (not data_checklist_question(request.message)
+                     or checklist_question_relevant(selected.question, request.message, sources))
                 and not EMBEDDED_QUESTION.search(answer) and selected.question.strip() not in answer):
             answer += '\n\n' + selected.question.strip()
         def hide_aliases(match):

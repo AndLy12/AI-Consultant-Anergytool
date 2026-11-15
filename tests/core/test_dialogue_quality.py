@@ -441,3 +441,16 @@ def test_power_correction_keeps_other_object_without_number():
     assert '600 кВт' not in text
 
 
+@pytest.mark.parametrize('question', [
+    'Сколько у вас приборов?',
+    'Какие счётчики уже установлены?',
+])
+def test_checklist_preserves_relevant_next_step(question):
+    """Перечень допускает следующий шаг о своих параметрах и синонимах приборов."""
+    chunks = make_chunks('training.md', [('Для учёта нужны тип и число приборов.', None, None)], 1800)
+    result = assemble({'status': 'answered', 'answer': 'Нужны тип и число приборов.',
+                       'evidence': ['D1'], 'question': question}, chunks,
+                      CoreRequest(message='Для учёта по арендаторам какие данные понадобятся?'))
+    assert result.answer.endswith(question)
+
+
