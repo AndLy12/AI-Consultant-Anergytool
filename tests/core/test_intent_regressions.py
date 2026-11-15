@@ -268,3 +268,50 @@ def test_nested_preparation_does_not_expand_to_other_products(index):
     assert any(c.text == 'Количество и тип приборов.' for c in context)
     assert all(c.text != 'Площадь кровли.' and c.text != 'Регион и мощность.' for c in context)
     assert all('Солнечные' not in h.chunk.title for h in hits)
+
+
+@pytest.mark.parametrize('message,history,sections', [
+    ('Для офиса с одним прибором есть минимальный порог парка?', [], ['Облачная платформа учёта']),
+    ('Уточни показатели качества для этих двух групп отдельно.',
+     [{'role': 'user', 'content': 'Хотим принимать фото водяных счётчиков.'},
+      {'role': 'user', 'content': 'Есть ещё электрические приборы.'}], ['Точность']),
+    ('Расскажи про солнечный резерв.', [], ['Если пропадёт электричество, станция обеспечит объект']),
+])
+def test_specific_product_facts_precede_generic_sections(message, history, sections):
+    """Число приборов, качество фото и резерв требуют своих условий из базы."""
+    from core.documents import make_chunks
+    from core.retrieval import SearchIndex
+    chunks = (
+        make_chunks('scope.md', [('# Область применения продуктов и ограничения\n\n'
+            '## Облачная платформа учёта\n\nМинимального количества приборов учёта нет.', None, None)], 1800)
+        + make_chunks('photo.md', [('# Распознавание показаний приборов учёта по фотографии\n\n'
+            '## Точность\n\nЭлектричество более 95 процентов, вода более 90 процентов.\n\n'
+            '## Кому подходит\n\nПриборы разных групп.', None, None)], 1800)
+        + make_chunks('solar.md', [('# Солнечные электростанции под ключ\n\n'
+            '## Если пропадёт электричество, станция обеспечит объект\n\n'
+            'Сетевая станция отключается с сетью. Гибридная конфигурация требует накопителей.\n\n'
+            '## Сколько это стоит\n\nСтоимость солнечного резерва индивидуальна.', None, None)], 1800)
+        + make_chunks('power.md', [('Минимальный порог мощности для офиса, парка и одного прибора.', None, None)], 1800))
+    hits = SearchIndex(tuple(chunks)).search_request(CoreRequest(message=message, history=history), 1)
+    assert hits[0].chunk.section in sections
+    assert hits[0].required
+
+
+def test_scope_section_of_excluded_product_cannot_be_required():
+    """Общий справочник не возвращает раздел исключённого продукта по его свойству."""
+    chunks = make_chunks('scope.md', [('# Область применения продуктов и ограничения\n\n'
+        '## Облачная платформа учёта\n\nМинимального количества приборов учёта нет.', None, None)], 1800)
+    request = CoreRequest(message='Учёт не нужен. Есть минимальное количество приборов?',
+                          history=[])
+    assert not SearchIndex(tuple(chunks)).search_request(request)
+
+
+def test_quality_anchor_does_not_override_solar_question():
+    """Качество панелей не должно закреплять таблицу точности распознавания."""
+    chunks = make_chunks('photo.md', [('# Распознавание показаний приборов учёта по фотографии\n\n'
+        '## Точность\n\nПоказания более 95 процентов.', None, None)], 1800)
+    chunks += make_chunks('solar.md', [('# Солнечные электростанции под ключ\n\n'
+        '## Оборудование\n\nКачество панелей зависит от поставщика.', None, None)], 1800)
+    hits = SearchIndex(tuple(chunks)).search_request(CoreRequest(message='Какое качество солнечных панелей?'))
+    assert hits
+    assert all('распознавание' not in h.chunk.title.lower() for h in hits)

@@ -146,10 +146,43 @@ class SearchIndex:
         """Сохраняем выбранные продукты и общие основания, отсекая чужие продуктовые разделы."""
         linked = {title for _, title in TOPICS if title in chunk.title.lower()}
         path = chunk.section_path or (chunk.section,)
+        # В справочнике границ продукт задан заголовком раздела, тогда как
+        # название документа общее. Исключения действуют и на эти разделы.
+        linked.update(title for _, title in TOPICS
+                      if any(title in (part or '').lower() for part in path))
         linked.update(title for title, heading in PREPARATION_SECTIONS.items()
                       if any((part or '').lower() == heading for part in path))
         return not linked.intersection(intent.excluded) and (
             not intent.active or not linked or bool(linked.intersection(intent.active)))
+
+    def fact_anchors(self, request, intent):
+        """Узкие вопросы о свойствах получают раздел с условиями до общего BM25.
+
+        Используем заголовки базы, а не ID сценариев или готовые ответы.
+        Исключения продукта проверяются до добавления обязательного источника.
+        """
+        text = request.message
+        headings = set()
+        if ('распознавание показаний' in intent.active
+                and re.search(r'точност|качеств|процент', text, re.I)):
+            headings.add(('распознавание показаний', 'точность'))
+        if ('солнечные электростанции' in intent.active
+                and re.search(r'резерв|автоном|отключ|пропад\w*\s+электр', text, re.I)):
+            headings.add(('солнечные электростанции',
+                          'если пропадёт электричество, станция обеспечит объект'))
+        # «Порог парка приборов» нельзя сопоставлять с порогом мощности.
+        # Не назначаем учёт воде/газу и сохраняем явно выбранный другой продукт.
+        if ((not intent.active or 'облачная платформа' in intent.active)
+                and not re.search(r'прибор\w*\s+(?:вод|газ|тепл)|сч[её]тчик\w*\s+(?:вод|газ|тепл)', text, re.I)):
+            if (re.search(r'минимальн|минимум|нижн\w*\s+порог', text, re.I)
+                    and re.search(r'прибор|сч[её]тчик', text, re.I)):
+                headings.add(('', 'облачная платформа учёта'))
+        return tuple(Hit(chunk, 0.0, True) for group in self.sections
+                     for chunk in group[:1]
+                     if self.allowed(chunk, intent)
+                     and any((not title or title in chunk.title.lower())
+                             and (chunk.section or '').lower() == section
+                             for title, section in headings))
 
     def search_request(self, request, top_k=5):
         """Сохраняем общий поиск, выделяя место продукту, названному в диалоге.
@@ -160,6 +193,9 @@ class SearchIndex:
         intent = search_intent(request)
         query = search_query(request)
         ranked = tuple(h for h in self.search(query, len(self.sections)) if self.allowed(h.chunk, intent))
+        anchors = self.fact_anchors(request, intent)
+        anchor_ids = {h.chunk.chunk_id for h in anchors}
+        ranked = anchors + tuple(h for h in ranked if h.chunk.chunk_id not in anchor_ids)
         hits = ranked[:top_k]
         checklist_found = False
         planning = (data_checklist_question(request.message)
@@ -221,7 +257,8 @@ class SearchIndex:
                 remaining = [h for h in hits if h.chunk.chunk_id not in ids and not (
                     checklist_found and h.chunk.title.lower() in {
                         'общие вопросы', 'обзор продуктов: что подходит под вашу задачу'})]
-                return tuple((primary + remaining)[:top_k])
+                return tuple((list(anchors) + [
+                    h for h in primary + remaining if h.chunk.chunk_id not in anchor_ids])[:top_k])
         return hits
 
     def rerank_candidates(self, hits, budget=48000, limit=96, *, request=None):
