@@ -90,6 +90,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     for key in ("questions", "reference", "baseline", "candidate", "output"):
         parser.add_argument("--" + key, required=True, type=Path)
+    parser.add_argument('--resume', action='store_true')
     args = parser.parse_args()
     inputs = [args.questions, args.reference, args.baseline, args.candidate]
     if args.output.resolve() in {p.resolve() for p in inputs}:
@@ -98,10 +99,39 @@ def main():
     ref, base, new = [read_answers(args.questions, path) for path in inputs[1:]]
     settings = replace(Settings.from_environment(), temperature=0)
     settings.validate_provider()
-    client = QwenClient(settings)
+    identity = {"rubric_sha256": hashlib.sha256(RUBRIC.encode()).hexdigest(),
+                "sha256": {str(path): hashlib.sha256(path.read_bytes()).hexdigest() for path in inputs},
+                "judge_model": settings.model, "temperature": settings.temperature,
+                "max_tokens": settings.max_tokens, "request_seconds": settings.request_seconds}
     cases, scores = [], []
+    if args.output.exists():
+        if not args.resume:
+            parser.error('Результат уже существует; для продолжения используйте --resume')
+        previous = json.loads(args.output.read_text(encoding='utf-8'))
+        if previous.get('identity') != identity:
+            parser.error('Нельзя объединять оценки разных входов, моделей или инструкций')
+        cases = previous['cases']
+        scores = [case['score'] for case in cases if 'score' in case]
+    completed = {case['id'] for case in cases}
+
+    def checkpoint():
+        """Сохраняем завершённые пары до следующего запроса, не теряя ошибки судьи."""
+        report = {**identity, 'identity': identity, "baseline": str(args.baseline),
+                  "candidate": str(args.candidate), "judged": len(scores),
+                  "total": len(questions), "completed": len(cases),
+                  "excluded": sum('score' not in c for c in cases),
+                  "pending": len(questions) - len(cases), "metrics": metrics(scores), "cases": cases}
+        args.output.parent.mkdir(parents=True, exist_ok=True)
+        temporary = args.output.with_suffix(args.output.suffix + '.tmp')
+        temporary.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding='utf-8')
+        temporary.replace(args.output)
+        return report
+
+    client = QwenClient(settings)
     try:
         for q in questions:
+            if q.id in completed:
+                continue
             rounds = []
             for a, b in [(base[q.id], new[q.id]), (new[q.id], base[q.id])]:
                 try:
@@ -113,14 +143,11 @@ def main():
                 case["score"] = (1 - rounds[0]["score_a"] + rounds[1]["score_a"]) / 2
                 scores.append(case["score"])
             cases.append(case)
+            checkpoint()
+            print(json.dumps({'id': q.id, 'score': case.get('score')}, ensure_ascii=False), flush=True)
     finally:
         client.close()
-    report = {"rubric_sha256": hashlib.sha256(RUBRIC.encode()).hexdigest(), "baseline": str(args.baseline), "candidate": str(args.candidate),
-              "sha256": {str(path): hashlib.sha256(path.read_bytes()).hexdigest() for path in inputs},
-              "judge_model": settings.model, "judged": len(scores), "total": len(questions),
-              "excluded": len(questions) - len(scores), "metrics": metrics(scores), "cases": cases}
-    args.output.parent.mkdir(parents=True, exist_ok=True)
-    args.output.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
+    report = checkpoint()
     print(json.dumps({k: v for k, v in report.items() if k != "cases"}, ensure_ascii=False))
     return int(len(scores) != len(questions) or not scores)
 
