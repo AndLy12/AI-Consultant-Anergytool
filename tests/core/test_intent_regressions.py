@@ -86,6 +86,41 @@ def test_genitive_case_does_not_assign_other_resource_or_unknown_system(message)
     assert 'облачная платформа' not in search_intent(CoreRequest(message=message)).active
 
 
+@pytest.mark.parametrize('message', [
+    'Солнечные панели не требуют очистки?',
+    'Солнечная станция не требует ремонта?',
+])
+def test_non_reflexive_requirement_is_a_property_not_product_refusal(index, message):
+    intent = search_intent(CoreRequest(message=message))
+    assert 'солнечные электростанции' in intent.active
+    assert 'солнечные электростанции' not in intent.excluded
+    assert any('Солнечные' in hit.chunk.title for hit in index.search_request(CoreRequest(message=message), 5))
+
+
+@pytest.mark.parametrize('message', ['Панели не требуются.', 'Солнечная станция не требуется.'])
+def test_reflexive_requirement_still_excludes_unwanted_product(message):
+    intent = search_intent(CoreRequest(message=message))
+    assert 'солнечные электростанции' in intent.excluded
+    assert 'солнечные электростанции' not in intent.active
+
+
+def test_report_recipient_synonym_finds_rso_without_claiming_product():
+    chunks = make_chunks('platform.md', [('# Облачная платформа\n\n## Отчёты в РСО\n\n'
+        'Экспорт отчёта в ресурсоснабжающую организацию.', None, None)], 1800)
+    chunks += make_chunks('privacy.md', [('# Конфиденциальность\n\nПридётся ли передавать данные.', None, None)], 1800)
+    request = CoreRequest(message='Наша отчётность отправляется поставщику ресурсов?')
+    assert search_intent(request).active == ()
+    assert SearchIndex(tuple(chunks)).search_request(request, 1)[0].chunk.section == 'Отчёты в РСО'
+    assert 'РСО' not in search_query(CoreRequest(message='Нужен отчёт о состоянии крыши.'))
+
+
+def test_report_synonym_does_not_reintroduce_explicitly_excluded_platform(index):
+    request = CoreRequest(message='Облачная платформа не нужна. Отчёт поставщику передавать самим?')
+    hits = index.search_request(request, 5)
+    assert 'облачная платформа' in search_intent(request).excluded
+    assert not any('Облачная' in h.chunk.title for h in hits)
+
+
 def test_return_reactivates_excluded_product(index):
     request = CoreRequest(message='Вернёмся к первому варианту. Что потребуется?', history=[
         {'role': 'user', 'content': 'Нужна солнечная станция.'},
