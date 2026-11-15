@@ -3,6 +3,7 @@ __pycache__/
 .DS_Store
 .env
 .venv/
+.venv-core/
 venv/
 submission.csv
 dist/
@@ -24,3 +25,12 @@ data/
 coverage.xml
 .env.*
 !.env.example
+# Личные учебные материалы и черновики не входят в исходники команды.
+/docs/DOCKER_GUIDE.md
+/docs/PR_DESCRIPTION.md
+/docs/local/
+submission*.csv
+*.report.json
+work/
+backups/
+*.tmp

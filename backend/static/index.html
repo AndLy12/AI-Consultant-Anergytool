@@ -1,7 +1,7 @@
 <!doctype html>
 <html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Energytool — прототип</title><link rel="stylesheet" href="/static/style.css"></head>
 <body><main><h1>Energytool</h1><p>Прототип консультации. Используйте вымышленные контактные данные.</p>
-<p id="status" role="status"></p>
+<p id="core-mode" role="status"></p><p id="status" role="status"></p>
 <section id="auth"><h2>Вход или регистрация</h2><form id="auth-form"><label>Email<input id="email" type="email" autocomplete="username" required></label><label>Пароль (от 10 символов)<input id="password" type="password" minlength="10" maxlength="128" autocomplete="current-password" required></label><button name="mode" value="login">Войти</button><button name="mode" value="register">Зарегистрироваться</button></form></section>
 <section id="workspace" hidden><p id="identity"></p><button id="logout">Выйти</button><button id="new">Новый диалог</button><button id="close">Закрыть чат</button><h2>История диалогов</h2><div id="dialogs"></div><h2>Чат</h2><div id="messages" aria-live="polite"></div><form id="message-form"><label>Сообщение<textarea id="message" maxlength="10000" required></textarea></label><button>Отправить</button></form>
 <details><summary>Данные отладки</summary><pre id="debug"></pre></details>

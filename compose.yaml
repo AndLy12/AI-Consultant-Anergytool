@@ -9,6 +9,7 @@ services:
       DATABASE_URL: ${DATABASE_URL:-sqlite:////data/energytool.db}
       CORE_MODE: ${CORE_MODE:-stub}
       CORE_MODULE: ${CORE_MODULE:-consultant_core}
+      CORE_DEMO: ${CORE_DEMO:-false}
       CORE_TIMEOUT_SECONDS: ${CORE_TIMEOUT_SECONDS:-120}
       APP_ORIGIN: ${APP_ORIGIN:-http://localhost:8000}
       COOKIE_SECURE: ${COOKIE_SECURE:-false}
@@ -20,12 +21,23 @@ services:
       OPENAI_MODEL: ${OPENAI_MODEL:-}
       GEN_MODEL: ${GEN_MODEL:-}
       DATA_DIR: ${DATA_DIR:-/knowledge}
+      CORE_KB_PATH: ${CORE_KB_PATH:-}
+      TOP_K: ${TOP_K:-5}
+      CHUNKER: ${CHUNKER:-sections}
+      CORE_CHUNK_CHARS: ${CORE_CHUNK_CHARS:-1800}
+      CORE_CONTEXT_CHARS: ${CORE_CONTEXT_CHARS:-14000}
+      CORE_HISTORY_CHARS: ${CORE_HISTORY_CHARS:-16000}
+      TEMPERATURE: ${TEMPERATURE:-0.1}
+      MAX_TOKENS: ${MAX_TOKENS:-1200}
+      MAX_WORKERS: ${MAX_WORKERS:-4}
+      LLM_TIMEOUT_SECONDS: ${LLM_TIMEOUT_SECONDS:-15}
+      LLM_MAX_RETRIES: ${LLM_MAX_RETRIES:-2}
     # Состояние БД живёт вне удаляемого контейнера.
     volumes:
       - app-data:/data
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3).read()"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/ready', timeout=3).read()"]
       interval: 5s
       timeout: 4s
       retries: 12

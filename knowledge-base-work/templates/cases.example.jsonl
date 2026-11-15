@@ -1,0 +1,1 @@
+{"case_id":"training-01","category":"условие","conversation":[{"role":"user","content":"Когда доступен экспорт на вымышленном учебном стенде?"}],"expected_action":"answered","expected_fact_ids":["training-fact-01"],"forbidden_claims":["Экспорт доступен без обязательной проверки."],"comment":"Учебный пример формата, не факт о продуктах Energytool."}
