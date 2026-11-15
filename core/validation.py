@@ -146,6 +146,20 @@ def generation_schema():
     return {'$defs': definitions, 'oneOf': branches}
 
 
+def review_schema():
+    """Результат review имеет те же обязательные поля статуса, что и генерация.
+
+    Обычная схема Pydantic не выражает межполевой валидатор: answered без
+    evidence проходил декодер, но отклонялся assemble. Не заменяем отсутствующий
+    источник выдуманной ссылкой; модель должна выбрать допустимый результат.
+    """
+    schema = AnswerReview.model_json_schema()
+    selection = generation_schema()
+    schema['$defs'].update(selection['$defs'])
+    schema['$defs']['ModelSelection'] = {'oneOf': selection['oneOf']}
+    return schema
+
+
 def assemble(raw, chunks, request, *, demo=False, truncated=False, secret='') -> CoreResponse:
     """Для связного ответа обязательны существующие источники и точные цитаты.
 

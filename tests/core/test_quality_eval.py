@@ -182,7 +182,12 @@ def test_reviewer_schema_requires_result(tmp_path):
         schema = json.loads(request.content)['response_format']['json_schema']['schema']
         assert schema['required'] == ['issues', 'follow_up_question', 'result']
         assert 'ModelSelection' in schema['$defs']
-        assert schema['$defs']['ModelSelection']['properties']['evidence']['maxItems'] == 3
+        branches = {b['properties']['status']['const']: b
+                    for b in schema['$defs']['ModelSelection']['oneOf']}
+        assert branches['answered']['properties']['evidence']['maxItems'] == 3
+        assert branches['answered']['properties']['evidence']['minItems'] == 1
+        assert 'answer' in branches['answered']['required']
+        assert 'question' in branches['clarification_needed']['required']
         return httpx.Response(200, json={'choices': [{'message': {'content':
             '{"issues":[],"result":{"status":"insufficient_data"}}'}}]})
     cfg = Settings(tmp_path, base_url='http://unit.test/v1', model='model', api_key='placeholder', retries=0)
