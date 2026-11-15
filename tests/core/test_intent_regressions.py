@@ -352,3 +352,23 @@ def test_general_limits_do_not_override_normal_category_price_question():
     index = SearchIndex(tuple(chunks))
     request = CoreRequest(message='Как зависит цена электроэнергии от ценовой категории?')
     assert index.fact_anchors(request, search_intent(request)) == ()
+
+
+@pytest.mark.parametrize("budget", [620, 2000])
+def test_second_required_table_is_completed_before_generic_guards(budget):
+    """Оговорки первого документа не вытесняют строки обязательной второй таблицы."""
+    from core.retrieval import Hit
+    first = make_chunks('first.md', [('# Первое решение\n\n## Обзор\n\nКраткий обзор.\n\n'
+        '## Ограничения\n\n' + 'Общее ограничение. ' * 30, None, None)], 1800)
+    second = make_chunks('second.md', [('# Второе решение\n\n## Точность\n\n'
+        'Вода: более 90 процентов.\n\nЭлектроэнергия: более 95 процентов.', None, None)], 1800)
+    index = SearchIndex(tuple(first + second))
+    overview = next(c for c in first if c.section == 'Обзор')
+    table = [c for c in second if c.section == 'Точность']
+    assert len(table) == 2
+    context = index.context((Hit(overview, 1), Hit(table[0], 0, True)), budget)
+    assert all(c in context for c in table)
+    assert sum(len(c.text) for c in context) <= budget
+    assert len({c.chunk_id for c in context}) == len(context)
+    if budget == 2000:
+        assert any(c.section == 'Ограничения' for c in context)

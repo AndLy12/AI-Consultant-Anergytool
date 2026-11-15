@@ -349,8 +349,12 @@ class SearchIndex:
                 groups.append(key)
             if hit.chunk.document_id not in documents:
                 documents.append(hit.chunk.document_id)
-        # Сначала восстанавливаем раздел лучшей находки, затем общие ограничения;
-        # оставшиеся разделы заполняют свободное место после защитных оговорок.
+        # Восстанавливаем обязательные разделы целиком до общих оговорок.
+        # Иначе у второй таблицы сохранялась первая строка, а остальные
+        # вытеснялись ограничениями первого документа. Лимит остаётся общим.
+        for hit in hits:
+            if hit.required:
+                add(self.groups[self.group_key(hit.chunk)])
         if groups:
             add(self.groups[groups[0]])
         guard_lists = [self.guards.get(document, ()) for document in documents]
