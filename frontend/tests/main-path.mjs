@@ -26,7 +26,7 @@ run.step('получен ответ консультанта', answer.length > 0
 await run.shot(page, '02-answer')
 
 await page.locator('#composer-input').fill('У нас три цеха, хотим видеть расход по каждому.')
-await page.getByRole('button', { name: 'Отправить' }).click()
+await page.getByRole('button', { name: 'Отправить', exact: true }).click()
 await page.waitForFunction(() => document.querySelectorAll('.row-bot').length >= 2, null, { timeout: 30000 })
 run.step('второе сообщение учтено в том же диалоге', true)
 
@@ -61,7 +61,7 @@ await run.shot(page, '06-lead-done')
 
 await page.getByRole('button', { name: 'Свернуть' }).click()
 await page.locator('#composer-input').fill('А что с резервным питанием?')
-await page.getByRole('button', { name: 'Отправить' }).click()
+await page.getByRole('button', { name: 'Отправить', exact: true }).click()
 await page.waitForFunction(() => document.querySelectorAll('.row-bot').length >= 3, null, { timeout: 30000 })
 run.step('консультация продолжается после заявки', true)
 

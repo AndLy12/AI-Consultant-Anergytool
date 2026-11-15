@@ -21,7 +21,7 @@ run.watch(page)
 await registerFresh(page, 'reload')
 
 await page.locator('#composer-input').fill('Хотим снизить счета за электричество')
-await page.getByRole('button', { name: 'Отправить' }).click()
+await page.getByRole('button', { name: 'Отправить', exact: true }).click()
 // Ждём настоящий ответ, а не индикатор «печатает» с тем же оформлением пузыря.
 await page.waitForFunction(
   () => !document.querySelector('.typing') && document.querySelectorAll('.row-bot .bubble-bot').length >= 1,

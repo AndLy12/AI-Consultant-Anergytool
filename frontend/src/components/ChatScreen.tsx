@@ -77,6 +77,8 @@ export default function ChatScreen({ debug, onSessionExpired }: Props) {
   const [leadStage, setLeadStage] = useState<LeadStage>('hidden')
   const [askNewDialog, setAskNewDialog] = useState(false)
   const [askClose, setAskClose] = useState(false)
+  /** Диалог создаётся ради заявки: блокируем повторное нажатие до ответа backend. */
+  const [creatingForLead, setCreatingForLead] = useState(false)
 
   // Предложение заявки не должно появляться снова после отказа пользователя.
   const declinedOffer = useRef<string>('')
@@ -293,6 +295,36 @@ export default function ChatScreen({ debug, onSessionExpired }: Props) {
     else setLeadStage('form')
   }
 
+  /**
+   * Постоянная кнопка «Отправить заявку» в левой колонке.
+   *
+   * Настоящее ядро не присылает action=offer_application, поэтому предложение
+   * в ленте может так и не появиться. Кнопка даёт путь к заявке в любой момент,
+   * в том числе до первого сообщения. Карточка в backend привязана к диалогу:
+   * если диалога ещё нет, создаём его (как при первом сообщении) и открываем
+   * ту же форму, что и кнопка в панели над чатом. Для завершённого диалога
+   * backend карточку тоже принимает, поэтому новый диалог там не создаём.
+   */
+  async function openLeadFromSide() {
+    if (dialog) {
+      openLead()
+      return
+    }
+    if (creatingForLead) return
+    setCreatingForLead(true)
+    setError('')
+    try {
+      const created = await api.createDialog()
+      setDialog({ ...created, messages: [] })
+      setCard(null)
+      setLeadStage('form')
+    } catch (caught) {
+      handleFailure(caught)
+    } finally {
+      setCreatingForLead(false)
+    }
+  }
+
   if (loading) {
     return <div className="boot" role="status">Загружаем диалог…</div>
   }
@@ -301,121 +333,142 @@ export default function ChatScreen({ debug, onSessionExpired }: Props) {
   const empty = messages.length === 0 && !pending && !failed
 
   return (
-    <div className="chat">
-      <div className="chat-toolbar">
-        <button type="button" className="button button-ghost" onClick={() => setAskNewDialog(true)}>
-          Новый диалог
-        </button>
-        {dialog && !closed ? (
-          <button type="button" className="button button-ghost" onClick={() => setAskClose(true)}>
-            Завершить диалог
-          </button>
-        ) : null}
-        {dialog ? (
-          <button type="button" className="button button-outline" onClick={openLead}>
-            {card?.status === 'created' ? 'Моя заявка' : 'Оставить заявку'}
-          </button>
-        ) : null}
-      </div>
-
-      {error ? (
-        <p className="banner banner-error" role="alert">
-          {error}
+    <div className="chat-layout">
+      <aside className="chat-side" aria-label="Заявка менеджеру">
+        <p className="chat-side-title">Заявка менеджеру</p>
+        <p className="chat-side-text">
+          {card?.status === 'created'
+            ? 'Заявка по этому диалогу создана. Её можно открыть и посмотреть.'
+            : card
+              ? 'Карточка заявки сохранена, осталось проверить и подтвердить.'
+              : 'Оставьте ФИО, телефон и компанию — менеджер получит их вместе с кратким резюме разговора.'}
         </p>
-      ) : null}
+        <button
+          type="button"
+          className="button button-primary chat-side-button"
+          onClick={() => void openLeadFromSide()}
+          disabled={creatingForLead}
+        >
+          Отправить заявку
+        </button>
+      </aside>
 
-      <div className="feed" aria-live="polite" aria-label="Переписка с консультантом">
-        {empty ? <StartSuggestions onPick={(text) => void send(text)} disabled={sending || waiting} /> : null}
+      <div className="chat">
+        <div className="chat-toolbar">
+          <button type="button" className="button button-ghost" onClick={() => setAskNewDialog(true)}>
+            Новый диалог
+          </button>
+          {dialog && !closed ? (
+            <button type="button" className="button button-ghost" onClick={() => setAskClose(true)}>
+              Завершить диалог
+            </button>
+          ) : null}
+          {dialog ? (
+            <button type="button" className="button button-outline" onClick={openLead}>
+              {card?.status === 'created' ? 'Моя заявка' : 'Оставить заявку'}
+            </button>
+          ) : null}
+        </div>
 
-        {messages.map((message) => (
-          <div key={message.id}>
-            <MessageBubble message={message} debug={debug} />
-            {message.role === 'user' && message.status === 'failed' ? (
-              <p className="row-note">Сообщение сохранено, но ответ не получен.</p>
-            ) : null}
-          </div>
-        ))}
+        {error ? (
+          <p className="banner banner-error" role="alert">
+            {error}
+          </p>
+        ) : null}
 
-        {pending || waiting ? (
-          <>
-            {/* Текст ожидающего сообщения после F5 уже есть в истории: дублировать не нужно. */}
-            {pending ? (
-              <article className="row row-user">
-                <div className="bubble bubble-user bubble-pending">
-                  <p className="bubble-text">{pending}</p>
-                  <p className="bubble-time">отправляем…</p>
+        <div className="feed" aria-live="polite" aria-label="Переписка с консультантом">
+          {empty ? <StartSuggestions onPick={(text) => void send(text)} disabled={sending || waiting} /> : null}
+
+          {messages.map((message) => (
+            <div key={message.id}>
+              <MessageBubble message={message} debug={debug} />
+              {message.role === 'user' && message.status === 'failed' ? (
+                <p className="row-note">Сообщение сохранено, но ответ не получен.</p>
+              ) : null}
+            </div>
+          ))}
+
+          {pending || waiting ? (
+            <>
+              {/* Текст ожидающего сообщения после F5 уже есть в истории: дублировать не нужно. */}
+              {pending ? (
+                <article className="row row-user">
+                  <div className="bubble bubble-user bubble-pending">
+                    <p className="bubble-text">{pending}</p>
+                    <p className="bubble-time">отправляем…</p>
+                  </div>
+                </article>
+              ) : null}
+              <article className="row row-bot">
+                <div className="avatar" aria-hidden="true">E</div>
+                <div className="bubble bubble-bot">
+                  <p className="typing" aria-label="Консультант готовит ответ">
+                    <span />
+                    <span />
+                    <span />
+                  </p>
                 </div>
               </article>
-            ) : null}
+            </>
+          ) : null}
+
+          {failed ? (
             <article className="row row-bot">
-              <div className="avatar" aria-hidden="true">E</div>
-              <div className="bubble bubble-bot">
-                <p className="typing" aria-label="Консультант готовит ответ">
-                  <span />
-                  <span />
-                  <span />
+              <div className="avatar avatar-error" aria-hidden="true">!</div>
+              <div className="bubble bubble-error">
+                <p className="bubble-label">
+                  {failed.technical ? 'Техническая ошибка' : 'Запрос не выполнен'}
                 </p>
+                <p className="bubble-text">{failed.text}</p>
+                <p className="bubble-note">
+                  {failed.technical
+                    ? 'Это сбой сервиса, а не отсутствие информации в базе знаний.'
+                    : 'Проверьте данные и повторите отправку.'}
+                </p>
+                <button type="button" className="button button-primary" onClick={retry} disabled={sending || waiting}>
+                  Повторить
+                </button>
               </div>
             </article>
-          </>
+          ) : null}
+
+          <div ref={feedEnd} />
+        </div>
+
+        {dialog && leadStage !== 'hidden' ? (
+          <LeadPanel
+            dialogId={dialog.id}
+            stage={leadStage}
+            card={card}
+            summaryDraft={summaryDraft}
+            onStage={setLeadStage}
+            onCard={setCard}
+            onSessionExpired={onSessionExpired}
+          />
         ) : null}
 
-        {failed ? (
-          <article className="row row-bot">
-            <div className="avatar avatar-error" aria-hidden="true">!</div>
-            <div className="bubble bubble-error">
-              <p className="bubble-label">
-                {failed.technical ? 'Техническая ошибка' : 'Запрос не выполнен'}
-              </p>
-              <p className="bubble-text">{failed.text}</p>
-              <p className="bubble-note">
-                {failed.technical
-                  ? 'Это сбой сервиса, а не отсутствие информации в базе знаний.'
-                  : 'Проверьте данные и повторите отправку.'}
-              </p>
-              <button type="button" className="button button-primary" onClick={retry} disabled={sending || waiting}>
-                Повторить
-              </button>
-            </div>
-          </article>
+        <Composer onSend={(text) => void send(text)} disabled={sending || waiting} closed={closed} />
+
+        {askNewDialog ? (
+          <ConfirmModal
+            title="Начать новый диалог?"
+            text="Текущий разговор уйдёт в историю, а консультант забудет его детали. Прежние сообщения останутся доступны в разделе «История»."
+            confirmLabel="Начать новый"
+            onConfirm={() => void startNewDialog()}
+            onCancel={() => setAskNewDialog(false)}
+          />
         ) : null}
 
-        <div ref={feedEnd} />
+        {askClose ? (
+          <ConfirmModal
+            title="Завершить диалог?"
+            text="Диалог уйдёт в историю и станет доступен только для чтения. Новый диалог можно начать в любой момент."
+            confirmLabel="Завершить"
+            onConfirm={() => void closeDialog()}
+            onCancel={() => setAskClose(false)}
+          />
+        ) : null}
       </div>
-
-      {dialog && leadStage !== 'hidden' ? (
-        <LeadPanel
-          dialogId={dialog.id}
-          stage={leadStage}
-          card={card}
-          summaryDraft={summaryDraft}
-          onStage={setLeadStage}
-          onCard={setCard}
-          onSessionExpired={onSessionExpired}
-        />
-      ) : null}
-
-      <Composer onSend={(text) => void send(text)} disabled={sending || waiting} closed={closed} />
-
-      {askNewDialog ? (
-        <ConfirmModal
-          title="Начать новый диалог?"
-          text="Текущий разговор уйдёт в историю, а консультант забудет его детали. Прежние сообщения останутся доступны в разделе «История»."
-          confirmLabel="Начать новый"
-          onConfirm={() => void startNewDialog()}
-          onCancel={() => setAskNewDialog(false)}
-        />
-      ) : null}
-
-      {askClose ? (
-        <ConfirmModal
-          title="Завершить диалог?"
-          text="Диалог уйдёт в историю и станет доступен только для чтения. Новый диалог можно начать в любой момент."
-          confirmLabel="Завершить"
-          onConfirm={() => void closeDialog()}
-          onCancel={() => setAskClose(false)}
-        />
-      ) : null}
     </div>
   )
 }

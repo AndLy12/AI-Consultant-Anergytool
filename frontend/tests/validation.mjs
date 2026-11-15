@@ -18,7 +18,7 @@ run.watch(page, { consoleErrors: false })
 await registerFresh(page, 'validation')
 
 await page.locator('#composer-input').fill('Хотим снизить счета за электричество')
-await page.getByRole('button', { name: 'Отправить' }).click()
+await page.getByRole('button', { name: 'Отправить', exact: true }).click()
 await page.waitForSelector('.row-bot .bubble-bot', { timeout: 30000 })
 
 await page.getByRole('button', { name: 'Оставить заявку' }).click()

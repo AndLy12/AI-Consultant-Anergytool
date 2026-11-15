@@ -383,6 +383,46 @@ h2 {
 
 /* ---------- Чат ---------- */
 
+/*
+ * Две колонки: слева постоянный блок заявки, справа чат. Ширина чата прежняя,
+ * колонка заявки добавлена рядом, чтобы кнопка была видна при любой длине ленты.
+ */
+.chat-layout {
+  width: 100%;
+  max-width: 1060px;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: 220px minmax(0, 1fr);
+  /* Строка не растёт вместе с лентой: прокручивается сама лента, а не страница. */
+  grid-template-rows: minmax(0, 1fr);
+  gap: 16px;
+}
+
+.chat-side {
+  align-self: start;
+  display: grid;
+  gap: 10px;
+  padding: 16px;
+  background: var(--surface);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+}
+
+.chat-side-title {
+  margin: 0;
+  font-weight: 650;
+}
+
+.chat-side-text {
+  margin: 0;
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+.chat-side-button {
+  width: 100%;
+}
+
 .chat {
   width: 100%;
   max-width: 820px;
@@ -1070,6 +1110,27 @@ h2 {
 
   .app-main {
     padding: 10px;
+  }
+
+  /* На телефоне блок заявки встаёт над чатом компактной строкой: пояснение скрыто. */
+  .chat-layout {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr);
+    gap: 10px;
+  }
+
+  .chat-side {
+    grid-template-columns: 1fr auto;
+    align-items: center;
+    padding: 10px 12px;
+  }
+
+  .chat-side-text {
+    display: none;
+  }
+
+  .chat-side-button {
+    width: auto;
   }
 
   .bubble {

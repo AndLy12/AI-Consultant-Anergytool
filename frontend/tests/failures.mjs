@@ -35,7 +35,7 @@ await page.route('**/api/dialogs/*/messages', async (route) => {
 })
 
 await page.locator('#composer-input').fill('Проверка поведения при сбое ядра')
-await page.getByRole('button', { name: 'Отправить' }).click()
+await page.getByRole('button', { name: 'Отправить', exact: true }).click()
 await page.waitForSelector('.bubble-error', { timeout: 20000 })
 const errorText = await page.locator('.bubble-error').textContent()
 run.step('503 показан как техническая ошибка', errorText.includes('Техническая ошибка'))
@@ -55,7 +55,7 @@ run.step(
 mode = 'offline'
 const before = requestIds.length
 await page.locator('#composer-input').fill('Проверка поведения при обрыве сети')
-await page.getByRole('button', { name: 'Отправить' }).click()
+await page.getByRole('button', { name: 'Отправить', exact: true }).click()
 await page.waitForSelector('.bubble-error', { timeout: 20000 })
 const offlineText = await page.locator('.bubble-error').textContent()
 run.step('обрыв сети объяснён понятным текстом', offlineText.includes('Нет связи с сервером'))
@@ -76,7 +76,7 @@ run.step(
 await page.unroute('**/api/dialogs/*/messages')
 const countBefore = await page.locator('.row-user').count()
 await page.locator('#composer-input').fill('Проверка двойного клика')
-const sendButton = page.getByRole('button', { name: 'Отправить' })
+const sendButton = page.getByRole('button', { name: 'Отправить', exact: true })
 await sendButton.click()
 run.step('кнопка отправки блокируется во время запроса', await sendButton.isDisabled())
 await page.waitForFunction(

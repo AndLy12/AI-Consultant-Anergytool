@@ -19,7 +19,7 @@ run.watch(pageA)
 await registerFresh(pageA, 'iso.a')
 
 await pageA.locator('#composer-input').fill('Секретный вопрос пользователя А про счётчики')
-await pageA.getByRole('button', { name: 'Отправить' }).click()
+await pageA.getByRole('button', { name: 'Отправить', exact: true }).click()
 // bubble-bot есть и у индикатора «печатает». Ждём текст завершённого ответа,
 // чтобы начать заполнение карточки после появления её черновика резюме.
 await pageA.waitForSelector('.row-bot .bubble-bot .bubble-text', { timeout: 30000 })

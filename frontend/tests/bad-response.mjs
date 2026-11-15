@@ -46,7 +46,7 @@ const raw = /JSON|Unexpected token|SyntaxError|<html|Bad Gateway/i
 
 // --- HTML с кодом 502 ---
 await page.locator('#composer-input').fill('Проверка ответа не в формате JSON')
-await page.getByRole('button', { name: 'Отправить' }).click()
+await page.getByRole('button', { name: 'Отправить', exact: true }).click()
 await page.waitForSelector('.bubble-error', { timeout: 20000 })
 const text502 = await page.locator('.bubble-error').textContent()
 run.step('HTML 502: понятный русский текст', text502.includes(expected), text502)
