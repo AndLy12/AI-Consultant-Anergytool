@@ -61,6 +61,27 @@ def read_answers(questions, path):
         return {row["id"]: row["answer"] for row in csv.DictReader(stream)}
 
 
+def read_references(questions, path):
+    """Справка судьи не является конкурсным ответом, но её ID и размер проверяем.
+
+    Общая справка с цитатами нескольких версий может быть длиннее 10000 символов.
+    Лимит самих ответов остаётся прежним в read_answers/validate_submission.
+    """
+    expected = [row.id for row in load_questions(questions)]
+    with path.open(encoding='utf-8', newline='') as stream:
+        reader = csv.DictReader(stream)
+        if reader.fieldnames != ['id', 'answer']:
+            raise ValueError('Ожидаются ровно колонки id,answer')
+        rows = list(reader)
+    if any(None in row or row.get('answer') is None or not row['answer'].strip()
+           or len(row['answer']) > 100000 for row in rows):
+        raise ValueError('Пустая, слишком длинная или повреждённая справка')
+    actual = [row['id'] for row in rows]
+    if actual != expected or len(set(actual)) != len(actual):
+        raise ValueError('ID справки не соответствуют исходным строкам')
+    return {row['id']: row['answer'] for row in rows}
+
+
 def metrics(scores):
     """Ничьи исключаются из Win Rate, полностью ничейный набор получает 0,5."""
     if not scores:
@@ -96,10 +117,12 @@ def main():
     if args.output.resolve() in {p.resolve() for p in inputs}:
         parser.error("Отчёт не должен перезаписывать входные данные")
     questions = load_questions(args.questions)
-    ref, base, new = [read_answers(args.questions, path) for path in inputs[1:]]
+    ref = read_references(args.questions, args.reference)
+    base, new = [read_answers(args.questions, path) for path in inputs[2:]]
     settings = replace(Settings.from_environment(), temperature=0)
     settings.validate_provider()
     identity = {"rubric_sha256": hashlib.sha256(RUBRIC.encode()).hexdigest(),
+                "judge_script_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
                 "sha256": {str(path): hashlib.sha256(path.read_bytes()).hexdigest() for path in inputs},
                 "judge_model": settings.model, "temperature": settings.temperature,
                 "max_tokens": settings.max_tokens, "request_seconds": settings.request_seconds}

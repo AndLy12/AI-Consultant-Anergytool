@@ -564,3 +564,29 @@ def test_malformed_provider_envelope_is_model_response_error(tmp_path, choice):
     with pytest.raises(ModelResponseError) as error:
         client.complete([], time.monotonic() + 2)
     assert 'секретный текст' not in str(error.value)
+def test_judge_reference_can_exceed_submission_limit_without_relaxing_answers(tmp_path):
+    """Цитаты трёх версий помещаются в справку; длинный ответ остаётся ошибкой."""
+    import csv
+    from scripts.judge_answers import read_answers, read_references
+    questions, reference = tmp_path / 'questions.csv', tmp_path / 'reference.csv'
+    questions.write_text('id,question\n001,Вопрос\n', encoding='utf-8')
+    text = 'Справочный текст. ' * 700
+    with reference.open('w', encoding='utf-8', newline='') as stream:
+        writer = csv.writer(stream)
+        writer.writerow(['id', 'answer'])
+        writer.writerow(['001', text])
+    assert read_references(questions, reference) == {'001': text}
+    with pytest.raises(ValueError):
+        read_answers(questions, reference)
+
+
+def test_judge_reference_preserves_leading_zero_ids(tmp_path):
+    """Численно совпадающий ID не заменяет точный исходный строковый ID."""
+    from scripts.judge_answers import read_references
+    questions, reference = tmp_path / 'questions.csv', tmp_path / 'reference.csv'
+    questions.write_text('id,question\n001,Вопрос\n', encoding='utf-8')
+    reference.write_text('id,answer\n1,Выдержка\n', encoding='utf-8')
+    with pytest.raises(ValueError):
+        read_references(questions, reference)
+
+
