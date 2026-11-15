@@ -1,0 +1,9 @@
+{
+  "base_url": "https://65d7c46ca4278b.app.lhr.life/v1",
+  "model": "energytool-eval",
+  "stream": false,
+  "max_tokens": 1200,
+  "parallel": 1,
+  "status": "running",
+  "token_location": "Передаётся Даньком отдельно"
+}
