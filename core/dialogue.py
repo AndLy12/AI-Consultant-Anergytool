@@ -296,6 +296,7 @@ def summary_excerpts(texts: list[str], excluded: tuple[str, ...] = (), active: t
     Каждый результат — исходная выдержка; разные объекты и неопределённые ссылки
     не сводим к одному значению. Это не замена смысловой проверке резюме моделью.
     """
+    original_texts = texts
     texts = _current_card_messages(texts, active)
     correction = re.compile(
         r'исправля\w*|поправ\w*|уточняю|уточнение|ошибся|ошиблась|'
@@ -307,14 +308,14 @@ def summary_excerpts(texts: list[str], excluded: tuple[str, ...] = (), active: t
     separate_objects = any(_NAMED_POWER.search(text) or (
         correction.search(text)
         and re.search(r'перв\w*|втор\w*|друг\w*|одн\w*\s+из', text, re.I))
-        for text in texts)
+        for text in original_texts)
     # «Склад» и «офис» также обозначают разные объекты без номеров. Для
     # них общий слот мощности небезопасен; точные замены обработаны выше,
     # неоднозначные остаются в исходной хронологии для подтверждения.
-    separate_objects = separate_objects or len({
-        match.group(1).lower() for text in texts
-        for match in re.finditer(r'\b(склад|офис|завод|магазин)\w*', text, re.I)
-    }) > 1
+    separate_objects = separate_objects or any(
+        not correction.search(text) and len({match.group(1).lower()
+            for match in re.finditer(r'\b(склад|офис|завод|магазин)\w*', text, re.I)}) > 1
+        for text in original_texts)
     # Не начинаем число с середины другого числа. Без этой границы длинная
     # последовательность цифр без единицы проверялась со всех позиций
     # и давала квадратичное время разбора допустимого входного сообщения.
