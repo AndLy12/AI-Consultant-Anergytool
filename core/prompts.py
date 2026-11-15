@@ -3,9 +3,9 @@
 import json
 import re
 from core.dialogue import (load_profile_question, data_checklist_question,
-                          data_sufficiency_question, PREPARATION_SECTIONS)
+                          data_sufficiency_question, search_intent, PREPARATION_SECTIONS)
 
-PROMPT_VERSION = 'energytool-v7-grounding-1'
+PROMPT_VERSION = 'energytool-v7-grounding-2'
 SYSTEM_PROMPT = """Ты консультант МТС Energytool. Ответь по-русски на current_message с учётом history.
 Сформулируй ответ хорошего консультанта, обычно в 2–5 предложениях.
 1. Ответь на то, что просят сейчас в последней реплике: возможность, этап работы, состав данных или причину.
@@ -85,6 +85,15 @@ def build_messages(request, history, chunks, secret=''):
     if secret:
         data = data.replace(secret, '[секрет удалён]')
     instruction = SYSTEM_PROMPT
+    if not search_intent(request).active:
+        # Найденный документ не доказывает, что клиент использует именно этот
+        # продукт. Особенно опасно безусловное «да» о неизвестной системе клиента.
+        instruction += (
+            '\nИз реплик клиента конкретный продукт не определён. Если описываешь '
+            'функцию конкретного продукта из documents, начни с явного условия '
+            '«Если речь о [этот продукт]…», а затем опиши функцию. Не начинай '
+            'с безусловного «да» или «нет» о системе клиента. Это не ограничение '
+            'для общего определения или перечисления доступных продуктов.')
     if data_checklist_question(request.message):
         instruction += (
             '\nТекущий запрос — перечень данных или первый шаг. Дай конкретный список '

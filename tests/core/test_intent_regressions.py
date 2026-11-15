@@ -67,6 +67,22 @@ def test_last_user_intent_wins_over_assistant_and_old_topic(index):
     hits = index.search_request(request, 5)
     assert hits[0].chunk.section == 'Для платформы учёта'
     assert all('Солнечные' not in h.chunk.title for h in hits)
+
+
+def test_preparation_for_metering_keeps_platform_in_genitive_case(index):
+    request = CoreRequest(message='Для учёта планируем до восьмидесяти приборов. Какие сведения собрать?')
+    hits = index.search_request(request, 5)
+    assert any(h.required and h.chunk.section == 'Для платформы учёта' for h in hits)
+    assert all('Солнечные' not in h.chunk.title for h in hits)
+
+
+@pytest.mark.parametrize('message', [
+    'Для учёта воды какие сведения собрать?',
+    'Для учёта реактивной энергии какие данные нужны?',
+    'В нашей системе учёта поддерживается выгрузка?',
+])
+def test_genitive_case_does_not_assign_other_resource_or_unknown_system(message):
+    assert 'облачная платформа' not in search_intent(CoreRequest(message=message)).active
     assert '600' not in search_query(request)
 
 
