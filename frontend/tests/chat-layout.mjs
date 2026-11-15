@@ -16,6 +16,7 @@
  */
 
 import { createRun, launchBrowser, registerFresh } from './lib/harness.mjs'
+import { checkLeadModal } from './lead-modal.mjs'
 
 const run = createRun('Главное окно чата')
 const browser = await launchBrowser()
@@ -129,6 +130,13 @@ await page.waitForTimeout(300)
 run.step('390 px: Esc закрывает колонку', !(await side.getByRole('button', { name: 'Новый диалог', exact: true }).isVisible()))
 const overflow = await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth + 1)
 run.step('390 px: нет горизонтальной прокрутки', !overflow)
+
+// --- Окно заявки: в той же сессии, чтобы не создавать ещё один аккаунт ---
+await page.setViewportSize({ width: 1440, height: 1024 })
+await page.getByRole('button', { name: '← К списку' }).click()
+await page.getByRole('button', { name: '← К чату' }).click()
+await page.waitForSelector('.start', { timeout: 15000 })
+await checkLeadModal(page, run)
 
 await browser.close()
 run.finish()

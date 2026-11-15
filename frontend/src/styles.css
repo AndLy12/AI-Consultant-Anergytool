@@ -1324,6 +1324,324 @@ h2 {
   margin-top: 14px;
 }
 
+/* ---------- Окно заявки (20:823, 22:1028) ----------
+ * Окно поверх всего интерфейса: фон затемнён rgba(0,0,0,0.21) и размыт на 8.5 px.
+ * Нажатие по фону ничего не делает (обработчика нет), закрывают Esc и крестик.
+ * Правила ограничены .lead-overlay: блок .lead в просмотре архива оформлен отдельно.
+ */
+
+.lead-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 30;
+  display: grid;
+  place-items: center;
+  padding: 16px;
+  background: var(--overlay);
+  backdrop-filter: blur(var(--overlay-blur));
+}
+
+/* Окно 1050 × 731, белое, радиус 50, без тени; содержимое прокручивается внутри. */
+.lead-overlay .lead {
+  position: relative;
+  left: var(--lead-offset-x);
+  top: var(--lead-offset-y);
+  width: var(--lead-modal-width);
+  max-width: 100%;
+  max-height: min(var(--lead-modal-height), calc(100vh - 32px));
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-panel);
+  background: var(--color-white);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  gap: 0;
+}
+
+.lead-overlay .lead-head {
+  flex: none;
+  padding: var(--lead-pad-top) calc(var(--lead-close-right) + var(--height-control) + 16px) 0
+    calc(var(--lead-pad-left) + var(--lead-title-inset));
+}
+
+/* «Форма заявки»: MTS Wide Bold 32px, #1d2023 (20:871). */
+.lead-heading {
+  margin: 0;
+  font-family: var(--font-wide);
+  font-size: var(--fs-title);
+  font-weight: var(--weight-bold);
+  line-height: var(--lh-normal);
+  color: var(--color-text);
+}
+
+.lead-heading:focus {
+  outline: none;
+}
+
+/* Крестик: кнопка 57 × 57, #dae0ea, радиус 16.29; крест 34.73 повёрнут на −45° (20:869, 21:878). */
+.lead-close {
+  position: absolute;
+  top: var(--lead-close-top);
+  right: var(--lead-close-right);
+  width: var(--height-control);
+  height: var(--height-control);
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: var(--border-thin) solid var(--color-line);
+  border-radius: var(--radius-control);
+  background: var(--color-line);
+  cursor: pointer;
+}
+
+.lead-close img {
+  display: block;
+  width: var(--lead-close-icon);
+  height: var(--lead-close-icon);
+  transform: rotate(-45deg);
+}
+
+/* Прокручиваемая часть: полоса прокрутки 9 px #d7dbe3 со скруглением (22:898). */
+.lead-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  margin-right: var(--lead-scroll-margin);
+  padding: var(--lead-body-top) var(--lead-pad-right) var(--lead-pad-bottom) var(--lead-pad-left);
+}
+
+.lead-body::-webkit-scrollbar {
+  width: var(--lead-scrollbar);
+}
+
+.lead-body::-webkit-scrollbar-thumb {
+  border-radius: var(--lead-scrollbar);
+  background: var(--color-field-border);
+}
+
+.lead-body::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.lead-field + .lead-field,
+.lead-overlay .lead-card-row + .lead-card-row {
+  margin-top: var(--lead-field-gap);
+}
+
+/* Ширина полей и кнопок — 950 px (21:879, 22:1106) независимо от полосы прокрутки:
+ * в разных браузерах она занимает место или накладывается поверх. */
+.lead-body > *,
+.lead-form > * {
+  max-width: var(--lead-control-width);
+}
+
+.lead-field {
+  display: flex;
+  flex-direction: column;
+}
+
+/* Подписи над полями: MTS Text Bold 20px, #8d969f, правее поля на 9 px (21:880).
+ * Селектор с .lead-overlay сильнее правила архива .lead-card dt (там подписи мельче). */
+.lead-overlay .lead-label {
+  display: block;
+  margin-bottom: var(--lead-label-gap);
+  padding-left: var(--lead-title-inset);
+  font-family: var(--font-text);
+  font-size: var(--fs-message);
+  font-weight: var(--weight-bold);
+  line-height: var(--lh-normal);
+  color: var(--color-text-muted);
+}
+
+/* Поле: 950 × 81, фон #f5f5f9, рамка #d7dbe3, радиус 22.956; текст 24px (21:879, 21:888).
+ * Решение владельца: введённый текст — тот же шрифт и размер, что пример, цвет чёрный. */
+.lead-input {
+  width: 100%;
+  height: var(--height-field);
+  padding: 0 calc(var(--lead-field-pad-x) - var(--border-field));
+  border: var(--border-field) solid var(--color-field-border);
+  border-radius: var(--radius-field);
+  background: var(--color-field);
+  font-family: var(--font-text);
+  font-size: var(--fs-field-lead);
+  font-weight: var(--weight-regular);
+  line-height: var(--lh-normal);
+  color: var(--color-black);
+}
+
+.lead-input::placeholder {
+  color: var(--color-text-muted);
+  opacity: 1;
+}
+
+/* Резюме растёт под текст от высоты обычного поля до 240 px, дальше прокручивается. */
+.lead-summary {
+  height: auto;
+  min-height: var(--height-field);
+  max-height: 240px;
+  padding-top: calc((var(--height-field) - 2 * var(--border-field) - 1.404em) / 2);
+  padding-bottom: calc((var(--height-field) - 2 * var(--border-field) - 1.404em) / 2);
+  field-sizing: content;
+  resize: none;
+  overflow-y: auto;
+}
+
+.lead-input.input-invalid {
+  border-color: var(--color-error);
+}
+
+/* Ошибка под полем — красным; в макете состояния ошибки нет. */
+.lead-error {
+  margin-top: 6px;
+  padding-left: var(--lead-title-inset);
+  font-family: var(--font-text);
+  font-size: var(--fs-button);
+  color: var(--color-error);
+}
+
+.lead-overlay .form-error {
+  margin-top: 24px;
+}
+
+/* Кнопки окна: 950 × 81, радиус 22.956, MTS Text Bold 20px, разрядка 2px (22:1106, 22:1104). */
+.lead-button {
+  width: 100%;
+  height: var(--height-field);
+  padding: 0 16px;
+  border: 0;
+  border-radius: var(--radius-field);
+  font-family: var(--font-text);
+  font-size: var(--fs-message);
+  font-weight: var(--weight-bold);
+  line-height: var(--lh-button);
+  letter-spacing: var(--ls-caps);
+  text-transform: uppercase;
+  cursor: pointer;
+}
+
+.lead-form .lead-button {
+  margin-top: var(--lead-button-top);
+}
+
+.lead-button-primary {
+  background: var(--color-red);
+  color: var(--color-white);
+}
+
+.lead-button-primary:hover:not(:disabled) {
+  background: var(--color-red-hover);
+}
+
+/* Неактивная — как серая кнопка входа (#eaedf0 / #c0c5cb). */
+.lead-button-primary:disabled {
+  background: var(--color-disabled);
+  color: var(--color-disabled-text);
+  cursor: not-allowed;
+}
+
+/* Второстепенная с рамкой («Изменить») — в макете её нет: белая, красная рамка и текст. */
+.lead-button-outline {
+  border: var(--border-field) solid var(--color-red);
+  background: var(--color-white);
+  color: var(--color-red);
+}
+
+.lead-overlay .lead-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--lead-consent-gap);
+  margin-top: var(--lead-button-top);
+}
+
+.lead-overlay .lead-actions:has(> :only-child) {
+  grid-template-columns: 1fr;
+}
+
+/* Данные для чтения на проверке и после создания: те же подписи, значения — в поле без рамки. */
+.lead-overlay .lead-card {
+  display: block;
+  margin: 0;
+  padding: 0;
+  background: none;
+}
+
+.lead-overlay .lead-card-row {
+  display: block;
+}
+
+.lead-value {
+  margin: 0;
+  min-height: var(--height-field);
+  padding: calc((var(--height-field) - 1.404em) / 2) var(--lead-field-pad-x);
+  border-radius: var(--radius-field);
+  background: var(--color-field);
+  font-family: var(--font-text);
+  font-size: var(--fs-field-lead);
+  line-height: var(--lh-normal);
+  color: var(--color-black);
+  overflow-wrap: anywhere;
+}
+
+.lead-overlay .lead-card-summary {
+  max-height: 240px;
+  overflow-y: auto;
+  white-space: pre-wrap;
+}
+
+/* Галочка согласия: 57 × 57, радиус 16.29; отмечена — #26cd58 с белой галочкой (22:1099).
+ * Это настоящий флажок с appearance: none — работает с клавиатуры и для диктора.
+ * Неотмеченного состояния в макете нет: фон и рамка как у поля. */
+.lead-overlay .consent {
+  display: flex;
+  align-items: center;
+  gap: var(--lead-consent-gap);
+  margin-top: var(--lead-consent-top);
+  font-family: var(--font-text);
+  font-size: var(--fs-field-lead);
+  line-height: var(--lh-normal);
+  color: var(--color-text-muted);
+  cursor: pointer;
+}
+
+.lead-overlay .consent input {
+  appearance: none;
+  flex: none;
+  width: var(--height-control);
+  height: var(--height-control);
+  margin: 0;
+  border: var(--border-field) solid var(--color-field-border);
+  border-radius: var(--radius-control);
+  background: var(--color-field) no-repeat center / var(--checkmark-width) var(--checkmark-height);
+  cursor: pointer;
+}
+
+.lead-overlay .consent input:checked {
+  border: var(--border-thin) solid var(--color-line);
+  background-color: var(--color-checked);
+  background-image: url('./assets/icons/checkmark.svg');
+}
+
+.consent-note {
+  display: block;
+  margin-top: 4px;
+  font-size: var(--fs-button);
+}
+
+/* «Заявка создана»: в макете экрана нет. */
+.lead-done-text {
+  margin: 0;
+  font-family: var(--font-text);
+  font-size: var(--fs-field-lead);
+  color: var(--color-black);
+}
+
+.lead-overlay .lead-note {
+  margin: 8px 0 var(--lead-field-gap);
+  font-size: var(--fs-ui);
+}
+
 /* ---------- Экраны истории и проверки ---------- */
 
 .screen {
@@ -1445,7 +1763,8 @@ h2 {
   display: grid;
   place-items: center;
   padding: 16px;
-  z-index: 10;
+  /* Выше окна заявки (30): вопрос «Закрыть форму?» открывается поверх него. */
+  z-index: 40;
 }
 
 .modal {
@@ -1636,6 +1955,52 @@ h2 {
   .lead,
   .screen {
     padding: 12px;
+  }
+
+  /* Окно заявки на телефоне — на весь экран (узкого кадра в макете нет). */
+  .lead-overlay {
+    padding: 0;
+  }
+
+  .lead-overlay .lead {
+    left: 0;
+    top: 0;
+    width: 100%;
+    height: 100%;
+    max-height: none;
+    border-radius: 0;
+  }
+
+  .lead-overlay .lead-head {
+    padding: 24px 88px 0 20px;
+  }
+
+  .lead-heading {
+    font-size: 24px;
+  }
+
+  .lead-close {
+    top: 12px;
+    right: 16px;
+  }
+
+  .lead-body {
+    margin-right: 0;
+    padding: 24px 20px;
+  }
+
+  .lead-input,
+  .lead-value {
+    font-size: var(--fs-message);
+  }
+
+  .lead-overlay .consent {
+    gap: 16px;
+    font-size: var(--fs-ui);
+  }
+
+  .lead-overlay .lead-actions {
+    grid-template-columns: 1fr;
   }
 
   .start-grid {

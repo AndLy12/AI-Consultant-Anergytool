@@ -35,7 +35,9 @@ run.step('до первого сообщения открывается форм
 await side.locator('.sidebar-chat-active').waitFor({ timeout: 5000 }).catch(() => undefined)
 run.step('для заявки создан диалог (он подсвечен в истории)', (await side.locator('.sidebar-chat-active').count()) === 1)
 await run.shot(page, '22-side-lead-empty')
-await page.getByRole('button', { name: 'Не сейчас', exact: true }).click()
+// Кнопки «Не сейчас» в окне заявки нет (макет 20:823): закрывает крестик. Форма пустая,
+// поэтому окно закрывается без вопроса.
+await page.getByRole('button', { name: 'Закрыть', exact: true }).click()
 run.step('форма закрывается, чат доступен', await page.locator('#composer-input').isEnabled())
 
 // --- После ответа консультанта: та же форма с черновиком резюме ---

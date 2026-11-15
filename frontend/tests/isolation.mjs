@@ -62,6 +62,8 @@ await pageA.getByRole('button', { name: 'Оставить заявку', exact: 
 await pageA.waitForSelector('.lead-done')
 const repeatedId = await pageA.locator('.lead-id').textContent()
 run.step('повторный заход показывает ту же заявку', repeatedId === firstId, repeatedId)
+// Окно заявки модальное: пока оно открыто, колонка за ним не нажимается. Закрываем.
+await pageA.getByRole('button', { name: 'Свернуть' }).click()
 
 // --- Пользователь B: своя история ---
 const contextB = await browser.newContext({ viewport: { width: 1280, height: 900 } })
