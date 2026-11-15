@@ -89,6 +89,10 @@ def test_genitive_case_does_not_assign_other_resource_or_unknown_system(message)
 @pytest.mark.parametrize('message', [
     'Солнечные панели не требуют очистки?',
     'Солнечная станция не требует ремонта?',
+    'Солнечная станция не нуждается в ежегодной настройке?',
+    'Панели не надо обслуживать?',
+    'Панели не нужно очищать?',
+    'От солнечной станции не планируем отказываться.',
 ])
 def test_non_reflexive_requirement_is_a_property_not_product_refusal(index, message):
     intent = search_intent(CoreRequest(message=message))
@@ -97,7 +101,10 @@ def test_non_reflexive_requirement_is_a_property_not_product_refusal(index, mess
     assert any('Солнечные' in hit.chunk.title for hit in index.search_request(CoreRequest(message=message), 5))
 
 
-@pytest.mark.parametrize('message', ['Панели не требуются.', 'Солнечная станция не требуется.'])
+@pytest.mark.parametrize('message', [
+    'Панели не требуются.', 'Солнечная станция не требуется.',
+    'Нам не нужны панели.', 'Солнечная станция нам не нужна.',
+])
 def test_reflexive_requirement_still_excludes_unwanted_product(message):
     intent = search_intent(CoreRequest(message=message))
     assert 'солнечные электростанции' in intent.excluded
