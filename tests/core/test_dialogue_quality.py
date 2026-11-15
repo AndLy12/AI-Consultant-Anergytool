@@ -85,6 +85,28 @@ def test_parameter_request_with_possessive_is_not_duplicated():
     assert result.answer == answer
 
 
+@pytest.mark.parametrize('request_text', [
+    'Уточните, пожалуйста, ориентацию площадки.',
+    'Подскажите, пожалуйста, как организована связь.',
+    'Назовите марку коммуникационного модуля.',
+])
+def test_polite_or_new_parameter_request_is_not_followed_by_second_question(request_text):
+    chunks = make_chunks('training.md', [('Установка возможна после проверки параметров.', None, None)], 1800)
+    answer = 'Установка возможна. ' + request_text
+    result = assemble({'status': 'answered', 'answer': answer, 'evidence': ['D1'],
+                       'question': 'Какие параметры у объекта?'}, chunks,
+                      CoreRequest(message='Можно установить на наш объект?'))
+    assert result.answer == answer
+
+
+def test_answer_without_parameter_request_keeps_useful_follow_up():
+    chunks = make_chunks('training.md', [('Подключение зависит от модели модуля.', None, None)], 1800)
+    result = assemble({'status': 'answered', 'answer': 'Подключение возможно после проверки совместимости.',
+                       'evidence': ['D1'], 'question': 'Какая модель модуля установлена?'}, chunks,
+                      CoreRequest(message='Можно подключить к нашему прибору?'))
+    assert result.answer.endswith('Какая модель модуля установлена?')
+
+
 @pytest.mark.parametrize('new', [
     'мощность 900 кВт, а не 600 кВт',
     'мощность не менее 900 кВт',
