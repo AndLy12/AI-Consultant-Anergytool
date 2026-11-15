@@ -1,6 +1,7 @@
-"""Независимый QA: фиксация закрытого набора, аудит и offline-поиск без LLM.
+"""Независимый QA: фиксация набора, offline-поиск и аудит сохранённых ответов.
 
-Набор и критерии фиксируются до генерации; готовые ответы сюда не подставляются.
+Набор и критерии фиксируются до генерации; готовые ответы аудируются отдельно.
+Инструмент не генерирует и не подменяет ответы модели.
 В Git допускается этот инструмент и синтетические тесты, но не его рабочие данные.
 """
 
@@ -17,6 +18,7 @@ import math
 import os
 from pathlib import Path
 import re
+import secrets
 import shutil
 import subprocess
 import sys
@@ -276,6 +278,268 @@ def wilson(passed, total):
     return [max(0, center-half), min(1, center+half)]
 
 
+def packet_file(root, name):
+    """Паспорту не разрешаем читать за пределами переданного пакета."""
+    if not isinstance(name, str) or "\\" in name or Path(name).is_absolute() or ".." in Path(name).parts:
+        raise ValueError("Небезопасный путь в паспорте")
+    path = (root / name).resolve()
+    if not path.is_relative_to(root) or not path.is_file():
+        raise ValueError("Файл паспорта отсутствует или выходит за пределы пакета")
+    return path
+
+
+def packet_csv(path, field):
+    """ID сохраняем строками: 001 не превращается в 1."""
+    with path.open(encoding="utf-8-sig", newline="") as stream:
+        reader = csv.DictReader(stream)
+        if reader.fieldnames != ["id", field]:
+            raise ValueError("Неверные колонки CSV пакета")
+        rows = list(reader)
+    if not rows or any(not row["id"] or not row[field] or not row[field].strip() for row in rows):
+        raise ValueError("Пустой ID или текст в CSV")
+    if len({row["id"] for row in rows}) != len(rows):
+        raise ValueError("Повторные ID в CSV")
+    return rows
+
+
+def runtime_hash_match(blob, recorded):
+    """Отличаем побайтовое совпадение от эквивалентных Windows-переносов.
+
+    CRLF не переписывает исходник и не оправдывает произвольную разницу кода.
+    SHA самого архива при этом всегда сверяется без нормализации.
+    """
+    if digest(blob) == recorded:
+        return "exact"
+    if b"\r\n" not in blob and digest(blob.replace(b"\n", b"\r\n")) == recorded:
+        return "git_lf_runtime_crlf"
+    return "mismatch"
+
+
+def blind_handoff(packet, output, key_file):
+    """Два порядка A/B для независимого проверяющего; ключ хранится отдельно.
+
+    Маскировка названий не доказывает отсутствие прежнего знакомства с ответами.
+    Разметка не заполняется автоматически и не превращается в оценку площадки.
+    """
+    root = Path(packet).resolve()
+    passport = json.loads(packet_file(root, "passport.json").read_text())
+    datasets = passport["datasets"][:2]
+    if len(datasets) != 2:
+        raise ValueError("Нужны два сопоставимых набора")
+    folders = [packet_file(root, d["folder"] + "/passport.json").parent for d in datasets]
+    questions_data = (folders[0] / "questions.csv").read_bytes()
+    if questions_data != (folders[1] / "questions.csv").read_bytes():
+        raise ValueError("Входы A/B отличаются")
+    answers = [packet_csv(packet_file(folder, d["answers"]), "answer") for folder, d in zip(folders, datasets)]
+    questions = packet_csv(folders[0] / "questions.csv", "question")
+    ids = [q["id"] for q in questions]
+    if any([a["id"] for a in rows] != ids for rows in answers):
+        raise ValueError("ID A/B отличаются")
+    sources = [{s["id"]: s["sources"] for s in read_cases(folder / "sources.jsonl")
+                if s.get("channel", "single") in {"single", "csv"}} for folder in folders]
+    output, key_file = private_path(output), private_path(key_file)
+    if key_file.is_relative_to(output) or key_file.exists():
+        raise ValueError("Ключ должен быть новым файлом вне передаваемой папки")
+    output.mkdir(parents=True, exist_ok=False, mode=0o700)
+    try:
+        files, key = {}, {"order-1": {}, "order-2": {}}
+
+        def put(relative, data):
+            path = output / relative
+            path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+            descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            with os.fdopen(descriptor, "wb") as stream:
+                stream.write(data)
+            files[relative] = digest(data)
+
+        put("questions.csv", questions_data)
+        first = {identity: secrets.randbits(1) for identity in ids}
+        for order_index, order in enumerate(("order-1", "order-2")):
+            source_records = []
+            for variant_index, variant in enumerate(("A", "B")):
+                stream = io.StringIO(newline="")
+                writer = csv.writer(stream)
+                writer.writerow(["id", "answer"])
+                for position, identity in enumerate(ids):
+                    selected = first[identity] ^ order_index ^ variant_index
+                    writer.writerow([identity, answers[selected][position]["answer"]])
+                    key[order].setdefault(identity, {})[variant] = datasets[selected]["folder"]
+                    source_records.append({"id": identity, "variant": variant, "sources": sources[selected][identity]})
+                put(order + "/answers-" + variant + ".csv", stream.getvalue().encode())
+            put(order + "/sources.jsonl", b"".join(canonical(row) + b"\n" for row in source_records))
+        put("assessments.csv", b"id,order,reviewer,winner,severity,claim,source,reason\r\n")
+        rubric = ("Проверить прямоту, факты/условия по источнику, историю, приватность и полезность. "
+                  "Не требовать дословного совпадения, не штрафовать за длину саму по себе. "
+                  "winner: A, B, tie либо insufficient_evidence. Ошибка/нехватка доказательств не является поражением. "
+                  "Каждое спорное утверждение связать с точным источником. Это просмотр сохранённых ответов, не новый прогон.")
+        public_passport = {"kind": "version_labels_hidden", "rows": len(ids), "files": files,
+                           "rubric": rubric, "rubric_sha256": digest(rubric.encode()),
+                           "corpus_sha256": passport["corpus_sha256"], "reviewer_prior_exposure": "unknown",
+                           "new_model_calls": 0, "final_included": False, "decision": "pending_independent_review"}
+        save(output / "passport.json", public_passport)
+        save(key_file, {"mapping": key, "packet_manifest_sha256": digest((root / "SHA256SUMS.json").read_bytes()),
+                        "blinded_passport_sha256": digest((output / "passport.json").read_bytes())})
+    except BaseException:
+        shutil.rmtree(output)
+        raise
+    return {"status": "prepared", "rows": len(ids), "orders": 2, "key_included": False,
+            "new_model_calls": 0, "blinded_passport_sha256": digest((output / "passport.json").read_bytes())}
+
+
+def audit_handoff(packet, corpus, output):
+    """Независимый аудит сохранённых результатов; ничего из пакета не исполняем.
+
+    Хеш доказывает целостность передачи, не истинность заявления о запуске модели.
+    Цитаты сопоставляются с неизменным корпусом по ID; нового поиска/генерации нет.
+    """
+    from core.config import Settings
+    from core.dialogue import parse_question
+    from core.documents import load_chunks
+    root = Path(packet).resolve()
+    if any(p.is_symlink() for p in root.rglob("*")):
+        raise ValueError("Ссылки в пакете не допускаются")
+    expected = json.loads(packet_file(root, "SHA256SUMS.json").read_text())
+    actual = {p.relative_to(root).as_posix(): digest(p.read_bytes()) for p in root.rglob("*")
+              if p.is_file() and p != root / "SHA256SUMS.json"}
+    if actual != expected:
+        raise ValueError("Состав или хеши пакета не совпадают")
+    passport = json.loads(packet_file(root, "passport.json").read_text())
+    corpus = Path(corpus).resolve()
+    corpus_hash = digest(corpus.read_bytes())
+    if passport["corpus_sha256"] != corpus_hash:
+        raise ValueError("Корпус не совпадает с паспортом пакета")
+    reports, chunk_cache = [], {}
+    for dataset in passport["datasets"]:
+        folder_name = dataset["folder"]
+        # Проверка folder через реально существующий паспорт также защищает от ../.
+        folder = packet_file(root, folder_name + "/passport.json").parent
+        meta = json.loads((folder / "passport.json").read_text())
+        for name, wanted in meta["files_sha256"].items():
+            if digest(packet_file(folder, name).read_bytes()) != wanted:
+                raise ValueError("Хеш вложенного паспорта не совпадает")
+        if meta["corpus_sha256"] != corpus_hash:
+            raise ValueError("Корпус отдельного набора отличается")
+        questions = packet_csv(folder / "questions.csv", "question")
+        answers = packet_csv(packet_file(folder, dataset["answers"]), "answer")
+        ids = [q["id"] for q in questions]
+        if ids != [a["id"] for a in answers] or len(ids) != dataset["rows"] or len(ids) != meta["rows"]:
+            raise ValueError("Наборы вопросов/ответов не совпадают")
+        if digest((folder / "questions.csv").read_bytes()) != meta["questions_sha256"]:
+            raise ValueError("Хеш вопросов не совпадает")
+        results = read_cases(folder / "results.jsonl")
+        row_id = lambda row: row.get("id", row.get("case", {}).get("case_id"))
+        if [row_id(row) for row in results] != ids:
+            raise ValueError("ID журнала не совпадают с CSV")
+        sources = read_cases(folder / "sources.jsonl")
+        source_keys = [(s["id"], s["turn"], s.get("channel", "single")) for s in sources]
+        if len(source_keys) != len(set(source_keys)) or {s["id"] for s in sources} != set(ids):
+            raise ValueError("Потеряны или повторены источники")
+        size = meta["parameters"]["chunk_chars"]
+        if size not in chunk_cache:
+            settings = Settings(data_dir=corpus.parent, kb_path=corpus, chunk_chars=size)
+            chunk_cache[size] = {c.chunk_id: c for c in load_chunks(settings)}
+        chunks = chunk_cache[size]
+        raw_records = set()
+        for raw_file in (folder / "raw").glob("*.json"):
+            raw_value = json.loads(raw_file.read_text())
+            if isinstance(raw_value, dict):
+                for collection in ("rows", "results"):
+                    if isinstance(raw_value.get(collection), list):
+                        raw_records.update(digest(canonical(record)) for record in raw_value[collection])
+        checked_sources, technical_failures = 0, 0
+        for question, answer, row in zip(questions, answers, results):
+            response = row.get("response") or row.get("core_response")
+            if not response or response["answer"] != answer["answer"] or row["answer"] != answer["answer"]:
+                raise ValueError("Ответ CSV не совпадает с сохранённым результатом")
+            request = parse_question(question["question"]).model_dump()
+            observed = row.get("request")
+            if observed is None:
+                conversation = row["effective_conversation"]
+                observed = {"message": conversation[-1]["content"], "history": conversation[:-1]}
+            if request != observed:
+                raise ValueError("Вопрос CSV отличается от реально записанного CoreRequest")
+            technical_failures += row["status"] in {"technical_failure", "blocked"}
+            variants = [response["sources"]]
+            original = row.get("original_record", {})
+            if original:
+                if digest(canonical(original)) not in raw_records:
+                    raise ValueError("Нормализованный экспорт не соответствует исходному raw-журналу")
+                original_response = original.get("response") or original.get("csv")
+                if original_response != response or original["request"] != observed:
+                    raise ValueError("Нормализация изменила ответ или запрос исходного журнала")
+            for channel in ("api", "csv"):
+                if channel in original:
+                    variants.append(original[channel]["sources"])
+            selected = [s for s in sources if s["id"] == question["id"]]
+            if response["sources"] not in [s["sources"] for s in selected]:
+                raise ValueError("Источники ответа не совпадают с экспортом")
+            for record in selected:
+                if record["sources"] not in variants:
+                    raise ValueError("Экспорт добавил источники, которых нет в сохранённом результате")
+                if record["turn"] != sum(t["role"] == "user" for t in request["history"]) + 1:
+                    raise ValueError("Неверный номер пользовательского хода")
+                for source in record["sources"]:
+                    chunk = chunks.get(source["chunk_id"])
+                    if chunk is None or source["document_id"] != chunk.document_id:
+                        raise ValueError("Неизвестный ID источника")
+                    if any(source.get(field) != getattr(chunk, field) for field in ("title", "section", "page")):
+                        raise ValueError("Координаты источника не совпадают с корпусом")
+                    if not source["excerpt"] or normalized(source["excerpt"]) not in normalized(chunk.text):
+                        raise ValueError("Цитата отсутствует в указанном фрагменте корпуса")
+                    checked_sources += 1
+        episodes_count = 0
+        if (folder / "transcripts.jsonl").exists():
+            if (folder / "results.jsonl").read_bytes() != (folder / "raw/results.jsonl").read_bytes():
+                raise ValueError("Живой журнал изменён при экспорте")
+            by_id = {row_id(row): row for row in results}
+            episodes = read_cases(folder / "transcripts.jsonl")
+            episode_ids = [identity for e in episodes for identity in e["case_ids"]]
+            if len(episode_ids) != len(ids) or set(episode_ids) != set(ids):
+                raise ValueError("Неполное покрытие живых ходов")
+            for episode in episodes:
+                first = by_id[episode["case_ids"][0]]
+                if bool(first["case"].get("reset_before")) != episode["reset_before_first_recorded"]:
+                    raise ValueError("Изменён флаг сброса")
+                for index, identity in enumerate(episode["case_ids"], 1):
+                    row = by_id[identity]
+                    full = row["effective_conversation"] + [{"role": "assistant", "content": row["answer"]}]
+                    if episode["transcript"][:2*index] != full:
+                        raise ValueError("Живой transcript не соответствует фактическим предыдущим ответам")
+            episodes_count = len(episodes)
+        if (folder / "contexts.jsonl").exists():
+            contexts = read_cases(folder / "contexts.jsonl")
+            if len(contexts) != len(ids) or {c["id"] for c in contexts} != set(ids):
+                raise ValueError("Неполное покрытие сохранённых контекстов")
+            by_id = {row_id(row): row for row in results}
+            if any(c["payload"] != by_id[c["id"]]["context_sent"] for c in contexts):
+                raise ValueError("Экспорт контекста отличается от исходного журнала")
+        runtime_matches = {}
+        revision = meta["code_revision"]
+        if revision and re.fullmatch(r"[0-9a-f]{40}", revision):
+            for name, wanted in meta["runtime_code_hashes_recorded"].items():
+                path = name.replace("\\", "/")
+                command = subprocess.run(["git", "show", revision + ":" + path], cwd=ROOT, capture_output=True)
+                runtime_matches[path] = runtime_hash_match(command.stdout, wanted) if command.returncode == 0 else "git_object_unavailable"
+        reports.append({"dataset": folder_name, "rows": len(ids), "source_records": len(sources),
+                        "source_citations_verified": checked_sources, "technical_failures_recorded": technical_failures,
+                        "live_episodes": episodes_count, "code_revision": meta["code_revision"],
+                        "runtime_hashes_recorded": bool(meta["runtime_code_hashes_recorded"]),
+                        "runtime_matches": runtime_matches,
+                        "runtime_identity_checked": bool(runtime_matches),
+                        "runtime_identity_verified": bool(runtime_matches) and all(v in {"exact", "git_lf_runtime_crlf"} for v in runtime_matches.values()),
+                        "full_model_request_captured": meta["full_model_request_captured"],
+                        "run_started_at_recorded": meta["run_started_at"] is not None,
+                        "semantic_verdict": "not_reviewed"})
+    first, second = passport["datasets"][:2]
+    paired_inputs_equal = (root / first["folder"] / "questions.csv").read_bytes() == (root / second["folder"] / "questions.csv").read_bytes()
+    report = {"status": "integrity_verified", "manifest_sha256": digest((root / "SHA256SUMS.json").read_bytes()),
+              "corpus_sha256": corpus_hash, "files_verified": len(expected), "rows_verified": sum(r["rows"] for r in reports),
+              "datasets": reports, "first_pair_inputs_byte_identical": paired_inputs_equal,
+              "new_model_calls": 0, "new_search_calls": 0, "quality_acceptance": "pending"}
+    save(private_path(output), report)
+    return report
+
+
 def search_report(bundle, data_dir, output):
     """Проверяем только developer-часть. Финал и генератор здесь недоступны."""
     from core.config import Settings
@@ -339,6 +603,14 @@ def main(argv=None):
     command.add_argument("--bundle", type=Path, required=True)
     command.add_argument("--output", type=Path, required=True)
     command.add_argument("--expected-manifest-sha256", required=True)
+    command = commands.add_parser("audit-handoff")
+    command.add_argument("--packet", type=Path, required=True)
+    command.add_argument("--corpus", type=Path, required=True)
+    command.add_argument("--output", type=Path, required=True)
+    command = commands.add_parser("blind-handoff")
+    command.add_argument("--packet", type=Path, required=True)
+    command.add_argument("--output", type=Path, required=True)
+    command.add_argument("--key-file", type=Path, required=True)
     args = parser.parse_args(argv)
     try:
         if args.command == "freeze":
@@ -347,6 +619,10 @@ def main(argv=None):
             report = audit(args.bundle, args.expected_manifest_sha256)
         elif args.command == "export-development":
             report = export_development(args.bundle, args.output, args.expected_manifest_sha256)
+        elif args.command == "audit-handoff":
+            report = audit_handoff(args.packet, args.corpus, args.output)
+        elif args.command == "blind-handoff":
+            report = blind_handoff(args.packet, args.output, args.key_file)
         else:
             report = search_report(args.bundle, args.data_dir, args.output)
         # Ни вопросы, ни цитаты в публичный stdout не выводятся.
