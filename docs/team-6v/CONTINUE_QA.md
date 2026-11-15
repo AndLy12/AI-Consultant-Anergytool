@@ -35,6 +35,33 @@ ANYA_FINDINGS и ROLE3_FINDINGS — авторские исторические 
 
 ## Что делать дальше
 
+Промежуточная контрольная точка: `1226a60`. Все пять направлений повторены
+на production-коде до патча (`36a256d`); реальные ответы сохранены в базовом
+checkout, `work/qa-cycle-2026-11-15/runs/before-reproductions/`.
+В `1226a60` изменена инструкция: точность чисел клиента, неизвестная цель,
+область применимости условия/продукта и оговорки цены. Проверки: 250 passed
+в корне, 20 passed в knowledge-base-work. Проверка реальной моделью после
+патча ещё не завершена; исправленными эти направления пока не объявлять.
+
+Создан отдельный чистый worktree `mts-energytool-core-baseline-qa` на `5bf4d22`.
+Начат реальный `baseline-demo` (18 входов) с помощью нового Данькиного
+`scripts/check_core_development.py`; результаты сохраняются после каждого шага.
+Для продолжения использовать тот же runner и `--resume`; изменение runner/кода/
+параметров блокирует смешивание записей. Исходные приватные очереди:
+`work/qa-cycle-2026-11-15/demo.jsonl`, `reproductions-and-controls.jsonl` (11 входов).
+
+Пример запуска из qa-cycle (пути относительно соседних worktree):
+
+```powershell
+& ../mts-energytool-core/.venv/Scripts/python.exe -X utf8 scripts/check_core_development.py --code-root . --cases ../mts-energytool-core/work/qa-cycle-2026-11-15/reproductions-and-controls.jsonl --data-dir ../mts-energytool-core/knowledge-base-work/data --output ../mts-energytool-core/work/qa-cycle-2026-11-15/runs/candidate-controls
+```
+
+Не запускать два прогона одновременно: у LM Studio один слот. Сначала дождаться
+текущего baseline-demo. Затем candidate-controls, проверить содержание, после
+этого candidate-demo, baseline/candidate-development. При незаконченных 18 парах
+не выдавать частичный judge за итог всего набора. Судья `scripts/judge_answers.py`
+возвращает долю; для балла по формуле умножить `metrics.score` на 100.
+
 - [ ] Записать реальный повтор пяти направлений: полный запрос/контекст, ответ,
   источники, точный SHA и хеши кода, модель, параметры, время и транспортные попытки.
 - [ ] Внести минимальные исправления ядра, добавить регрессии и новые формулировки.
