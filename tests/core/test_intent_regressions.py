@@ -407,3 +407,36 @@ def test_cached_product_labels_do_not_keep_previous_client_exclusions():
     assert not index.allowed(chunks[0], excluded)
     assert index.allowed(chunks[0], included)
     assert not index.allowed(chunks[0], excluded)
+
+
+@pytest.mark.parametrize('message,active,excluded', [
+    ('Панели не нужны и нужен учёт.', 'облачная платформа', 'солнечные электростанции'),
+    ('Нужен учёт и не нужны панели.', 'облачная платформа', 'солнечные электростанции'),
+    ('Отказываемся от панелей и не отказываемся от учёта по арендаторам.',
+     'облачная платформа', 'солнечные электростанции'),
+])
+def test_independent_product_decisions_joined_by_and(message, active, excluded):
+    """Союз с новым сказуемым отделяет решение об одном продукте от другого."""
+    intent = search_intent(CoreRequest(message=message))
+    assert active in intent.active
+    assert excluded in intent.excluded
+    assert active not in intent.excluded
+
+
+def test_shared_product_list_keeps_common_refusal():
+    """Список без нового сказуемого сохраняет общий отказ от обоих продуктов."""
+    intent = search_intent(CoreRequest(message='Не нужны панели и выход на оптовый рынок.'))
+    assert not intent.active
+    assert {'солнечные электростанции', 'выход на оптовый рынок'} <= set(intent.excluded)
+
+
+@pytest.mark.parametrize('question', [
+    'Солнечная станция нам не нужна?',
+    'Нам не нужны панели?',
+    'Отказываемся от солнечной станции?',
+])
+def test_negative_product_question_is_not_client_refusal(question, index):
+    """Вопрос о необходимости продукта сохраняет источники для ответа."""
+    intent = search_intent(CoreRequest(message=question))
+    assert 'солнечные электростанции' not in intent.excluded
+    assert any('Солнечные' in h.chunk.title for h in index.search_request(CoreRequest(message=question)))

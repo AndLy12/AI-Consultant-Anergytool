@@ -360,3 +360,48 @@ def test_named_objects_do_not_bypass_excluded_product_filter():
     assert '600 кВт' in draft
     assert 'только учёт' in draft
     assert 'солнечн' not in draft.lower()
+
+
+@pytest.mark.parametrize('message', [
+    'Не резюмируй пока.',
+    'Не перечисляй объекты для заявки.',
+    'Не надо подводить итоги.',
+    'Не собирай заявку.',
+])
+def test_explicit_card_opt_out_is_respected(message):
+    """Явный отказ от подготовки черновика действует и для альтернативных глаголов."""
+    request = CoreRequest(message=message, history=[
+        {'role': 'user', 'content': 'Склад, мощность 900 кВт. Нужен учёт.'}])
+    assert assemble({'status': 'insufficient_data'}, (), request).summary_draft is None
+
+
+def test_engine_repairs_malformed_provider_envelope(tmp_path):
+    """После неверного конверта вторая попытка возвращает консультацию с источником."""
+    chunks = make_chunks('training.md', [('Учёт доступен.', None, None)], 1800)
+    calls = []
+    def handler(request):
+        calls.append(json.loads(request.content))
+        if len(calls) == 1:
+            return httpx.Response(200, json={'choices': [None]})
+        return httpx.Response(200, json={'choices': [{'message': {'content': json.dumps({
+            'status': 'answered', 'answer': 'Учёт доступен.', 'evidence': ['D1']})}}]})
+    cfg = Settings(tmp_path, base_url='http://unit.test/v1', model='model', api_key='placeholder',
+                   retries=0, review_answers=False)
+    result = EnergytoolCore(cfg, chunks=chunks, client=QwenClient(cfg, httpx.MockTransport(handler))).respond(
+        CoreRequest(message='Учёт доступен?'))
+    assert len(calls) == 2
+    assert result.core_status == 'answered'
+    assert result.sources
+
+
+@pytest.mark.parametrize('message', [
+    'Не надо перечислять объекты для заявки.',
+    'Не нужно составлять резюме.',
+    'Не следует оформлять заявку.',
+    'Не хочу готовить заявку, просто расскажи об учёте.',
+])
+def test_modal_card_opt_out_is_respected(message):
+    """Модальные формы отказа не должны превращаться в заказ карточки."""
+    request = CoreRequest(message=message, history=[
+        {'role': 'user', 'content': 'Объект — склад, мощность 900 кВт.'}])
+    assert assemble({'status': 'insufficient_data'}, (), request).summary_draft is None
