@@ -248,3 +248,11 @@ def test_malformed_review_over_http_preserves_valid_generation(tmp_path):
     assert response.answer == 'Учёт доступен.'
     assert response.sources
     assert response.warnings == ['Дополнительная проверка ответа не завершена.']
+
+
+def test_solar_assessment_preparation_question_uses_checklist_intent():
+    """Запрос списка исходных данных отделяем от просьбы оценить мощность."""
+    from core.dialogue import data_checklist_question
+
+    assert data_checklist_question('Рассматриваем солнечную станцию. Что нужно для оценки?')
+    assert not data_checklist_question('Можете оценить мощность станции?')
