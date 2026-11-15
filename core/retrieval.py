@@ -34,6 +34,10 @@ def tokens(text: str) -> list[str]:
     Нормализация меняет только поисковые ключи, исходные цитаты сохраняются.
     """
     text = text.lower().replace('ё', 'е')
+    # Названия услуги и машинного кода встречаются в базе и слитно, и
+    # раздельно. Нормализуем запрос и индекс одинаково, сохраняя исходные цитаты.
+    text = re.sub(r'\bэнергообследован', 'энергетическое обследован', text)
+    text = re.sub(r'\bштрих[ -]+код', 'штрихкод', text)
     text = re.sub(r'\bsim\b', 'сим', text)
     text = re.sub(r'киловатт[а-я]*[\s-]+час[а-я]*', ' квтч ', text)
     text = re.sub(r'\bквт\s*[·⋅*-]?\s*ч\b', ' квтч ', text)
@@ -163,6 +167,14 @@ class SearchIndex:
         """
         text = request.message
         headings = set()
+        if ((re.search(r'продав\w*|поставщик\w*|энергосбыт', text, re.I)
+                and re.search(r'мтс|energytool', text, re.I)
+                and re.search(r'электр|энерг', text, re.I))
+                or (re.search(r'точн\w*|итогов\w*', text, re.I)
+                    and re.search(r'цен[ауые]|стоимост', text, re.I))
+                or (re.search(r'гарантир\w*', text, re.I)
+                    and re.search(r'окупаемост|экономическ\w*\s+эффект', text, re.I))):
+            headings.add(('область применения продуктов и ограничения', 'общие границы'))
         if ('распознавание показаний' in intent.active
                 and re.search(r'точност|качеств|процент', text, re.I)):
             headings.add(('распознавание показаний', 'точность'))
@@ -177,6 +189,10 @@ class SearchIndex:
             if (re.search(r'минимальн|минимум|нижн\w*\s+порог', text, re.I)
                     and re.search(r'прибор|сч[её]тчик', text, re.I)):
                 headings.add(('', 'облачная платформа учёта'))
+        # У большинства вопросов нет обязательного раздела. Не обходим
+        # весь индекс, когда ни одно из условий выше не сработало.
+        if not headings:
+            return ()
         return tuple(Hit(chunk, 0.0, True) for group in self.sections
                      for chunk in group[:1]
                      if self.allowed(chunk, intent)

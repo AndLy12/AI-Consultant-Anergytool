@@ -315,3 +315,40 @@ def test_quality_anchor_does_not_override_solar_question():
     hits = SearchIndex(tuple(chunks)).search_request(CoreRequest(message='Какое качество солнечных панелей?'))
     assert hits
     assert all('распознавание' not in h.chunk.title.lower() for h in hits)
+
+
+@pytest.mark.parametrize('phrase', ['облачного учёта', 'облачным учётом', 'облачный учёт'])
+def test_cloud_metering_inflections_keep_product(phrase):
+    """Падеж продукта не должен оставлять запрос без активной темы."""
+    assert search_intent(CoreRequest(message=f'Есть ли обследование при {phrase}?')).active == ('облачная платформа',)
+
+
+def test_retrieval_normalizes_compound_terms():
+    """Слитные названия услуги и кода совпадают с написанием в документах."""
+    from core.retrieval import tokens
+    assert tokens('энергообследование') == tokens('энергетическое обследование')
+    assert tokens('штрихкод') == tokens('штрих-код')
+
+
+@pytest.mark.parametrize('question', [
+    'Станет ли МТС продавцом электричества после подключения?',
+    'Назови точную итоговую цену модернизации, данных по объекту нет.',
+    'Гарантируете окупаемость нашего проекта за 18 месяцев?',
+])
+def test_project_promises_retrieve_general_limits(question):
+    """Ограничения конкретных обещаний находятся раньше индикативных цифр."""
+    chunks = make_chunks('scope.md', [('# Область применения продуктов и ограничения\n\n'
+        '## Общие границы\n\nМТС не поставляет электроэнергию. Стоимость и эффект '
+        'определяются после изучения данных объекта.', None, None)], 1800)
+    hits = SearchIndex(tuple(chunks)).search_request(CoreRequest(message=question), 1)
+    assert hits and hits[0].chunk.section == 'Общие границы'
+    assert hits[0].required
+
+
+def test_general_limits_do_not_override_normal_category_price_question():
+    """Обычный вопрос о тарифной категории не требует правил точной цены проекта."""
+    chunks = make_chunks('scope.md', [('# Область применения продуктов и ограничения\n\n'
+        '## Общие границы\n\nЦена проекта определяется индивидуально.', None, None)], 1800)
+    index = SearchIndex(tuple(chunks))
+    request = CoreRequest(message='Как зависит цена электроэнергии от ценовой категории?')
+    assert index.fact_anchors(request, search_intent(request)) == ()
