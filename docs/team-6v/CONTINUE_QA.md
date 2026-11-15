@@ -42,7 +42,7 @@ ANYA_FINDINGS и ROLE3_FINDINGS — авторские исторические 
 - Пользователь попросил доступ ребятам через интернет и публикацию кода в Git.
   Поднят отдельный тестовый шлюз `scripts/team_model_gateway.py` на 127.0.0.1:1235;
   LM Studio остаётся на 127.0.0.1:1234. Нативные административные API не выставлены.
-- Рабочий URL: **https://65d7c46ca4278b.app.lhr.life/v1**, модель `energytool-eval`.
+- Рабочий URL: **https://60270477beb882.app.lhr.life/v1**, модель `energytool-eval`.
   SSH localhost.run работает скрытым процессом, без использования личных SSH-ключей.
   Текущий PID/URL — закрытый `work/team-model-api/process-state.json` базового checkout.
 - Ключ создан отдельно и НЕ публикуется. Для передачи команде:

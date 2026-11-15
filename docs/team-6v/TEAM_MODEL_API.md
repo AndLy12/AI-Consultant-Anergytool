@@ -1,7 +1,7 @@
 # Модель Данька: доступ команды через интернет
 
 Рабочий адрес на 15 ноября 2026:
-`https://65d7c46ca4278b.app.lhr.life/v1`.
+`https://60270477beb882.app.lhr.life/v1`.
 Модель: **`energytool-eval`**. Актуальные открытые параметры —
 [TEAM_MODEL_ENDPOINT.json](TEAM_MODEL_ENDPOINT.json). Адрес временный.
 
@@ -12,7 +12,7 @@
 ## Подключение из PowerShell
 
 ```powershell
-$env:LLM_BASE_URL='https://65d7c46ca4278b.app.lhr.life/v1'
+$env:LLM_BASE_URL='https://60270477beb882.app.lhr.life/v1'
 $env:LLM_API_KEY='<ключ из закрытого файла Данька>'
 $env:LLM_MODEL='energytool-eval'
 $env:CORE_DEMO='false'

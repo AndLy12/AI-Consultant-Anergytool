@@ -55,6 +55,9 @@ if ($qaState -and -not $RotateKey) {
         $qaHealthy = Invoke-RestMethod -Uri 'http://127.0.0.1:1235/health' -Headers @{Authorization=('Bearer ' + $qaConfig.token)} -TimeoutSec 3
         $qaTunnelAlive = Get-CimInstance Win32_Process -Filter "ProcessId=$($qaState.tunnel_pid)"
         if ($qaHealthy.status -eq 'running' -and $qaTunnelAlive -and $qaTunnelAlive.CommandLine.Contains($qaPrivate)) {
+            # Живой SSH-процесс не гарантирует, что сервис сохранил внешний туннель.
+            $qaExistingExternal = Invoke-RestMethod -Uri ($qaState.base_url + '/models') -Headers @{Authorization=('Bearer ' + $qaConfig.token)} -TimeoutSec 15
+            if ($qaExistingExternal.data[0].id -ne 'energytool-eval') { throw 'Внешний туннель недоступен' }
             [ordered]@{base_url=$qaState.base_url;model='energytool-eval';stream=$false;max_tokens=1200;parallel=1;status='running';token_location='Передаётся Даньком отдельно'} | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $qaRepo 'docs/team-6v/TEAM_MODEL_ENDPOINT.json') -Encoding utf8
             Write-Output "API уже запущен: $($qaState.base_url)"
             Write-Output "Закрытые параметры: $qaConnectionPath"
@@ -109,7 +112,8 @@ $qaState | ConvertTo-Json | Set-Content -LiteralPath $qaStatePath -Encoding utf8
 $qaUrl = $null
 for ($qaTry=0; $qaTry -lt 60; $qaTry++) {
     if (Test-Path -LiteralPath $qaTunnelLog) {
-        $qaTunnelText = Get-Content -LiteralPath $qaTunnelLog -Raw
+        # Сразу после запуска файл уже существует, но SSH ещё мог ничего не записать.
+        $qaTunnelText = [string](Get-Content -LiteralPath $qaTunnelLog -Raw)
         $qaPattern = if ($Transport -eq 'ssh') { 'https://[a-z0-9.-]+\.lhr\.life' } else { 'https://[a-z0-9-]+\.trycloudflare\.com' }
         $qaMatch = [regex]::Match($qaTunnelText, $qaPattern)
         if ($Transport -eq 'cloudflare' -and $qaTunnelText -notmatch 'Registered tunnel connection') { Start-Sleep -Milliseconds 500; continue }
