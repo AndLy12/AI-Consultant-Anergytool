@@ -33,7 +33,120 @@ ZIP решения и отправка на площадку не разреше
 Закрытые тексты воспроизведений — README developer-пакета, не копировать их в Git.
 ANYA_FINDINGS и ROLE3_FINDINGS — авторские исторические отчёты, их не переписывать.
 
-## Последний результат V7 и следующий шаг
+## Актуальная передача: e33ed88
+
+**Продолжать отсюда; разделы ниже — история.** Код V7 `e33ed88`, полные тесты:
+**261 passed**, 1 предупреждение Starlette; подготовка базы **20 passed**.
+Новые изменения по сравнению с `daf341d`:
+
+- `9c910ec`: статусная JSON Schema для генерации. У answered обязательны текст
+  и непустые источники; у clarification — вопрос без источников. Схема не заменяет
+  Pydantic и сверку цитат. Совместимость API с json_object остаётся с прежними
+  ограниченными повторами. На schema-controls: 11 результатов, 21 вызов вместо
+  прежних 27, 90,56 с вместо 119,64 с в r3, ошибок/незавершённых review нет.
+- `6da278d`: восстановлен один полезный следующий вопрос для собственного проекта
+  клиента. Чистая справка, список данных и известные параметры остаются исключениями.
+- `e33ed88`: найден и исправлен дубль просьбы о параметрах: вежливое «уточните,
+  пожалуйста» в тексте раньше не распознавалось и получало второй вопрос в конце.
+  Добавлены 4 регрессии, включая сохранение полезного вопроса там, где его ещё нет.
+
+### Что выполняется прямо сейчас
+
+Одна последовательная shell-задача без параллельных запросов к LM Studio:
+
+1. `runs/v7-demo-r6/`: 18 реальных ответов на `e33ed88`.
+2. Судья → `judge-demo-v7-v6-r6.json` (та же рубрика, reference и V6).
+3. `runs/baseline-development/`: 82 реальных ответа V6 `5bf4d22` на новом dev60.
+
+Перед перезапуском проверить наличие живого процесса `check_core_development.py`
+и фактическую активность `lms ps`. Не запускать второй прогон поверх первого:
+контекст 8192, один слот. Копии outputs с r3/r4/r5 не затирать.
+`v7-demo-r5` завершён (18/18, 36 вызовов, без ошибок), но содержит найденный
+дубль вопроса, поэтому не выдаётся за проверку `e33ed88`.
+
+### После текущей последовательности
+
+1. Прочитать r6 judge целиком, разобрать все проигрыши относительно источников.
+   Предыдущие полные сравнения: 23,333/100 (r2), **24,306/100 (r4)**.
+   R4: MatchRate=25/72, WinRate=0, 0 побед / 11 поражений / 7 ничьих.
+   Это не балл сайта и не доказательство роста относительно V6. Нельзя менять
+   судью/reference/выборку, скрывать проигрыши или объявлять 261 тест баллом качества.
+2. Дождаться 82 baseline-development; проверить ошибки и фактические live-истории.
+3. Запустить `v7-development` на той же закрытой очереди (команда ниже).
+4. Для всех 82 ответов проверить источники и обязательные условия. При ошибке
+   исправить минимальную причину, добавить регрессию; новый кандидат — новый output,
+   нельзя дописывать его в старый паспорт. Отдельно проверять контекст 8192:
+   раньше максимальный total_tokens=8081, overflow в тех прогонах не обнаружен.
+5. Реальные API/CSV 5 пар по `api-protocol.json`, проверка равенства запросов,
+   сохранения ID и идемпотентного повтора. Backend-контракт не менять.
+6. Сформировать закрытую папку передачи V6/V7: questions.csv, answers-*.csv,
+   sources.jsonl, results.jsonl, паспорт, calls/network, живой transcript/reset,
+   manifest хешей и README. Источники брать из recorded response/context, не
+   достраивать прошлый ответ повторным поиском. В Git только код и агрегаты.
+7. Аня сверяет критерии/факты, коллега три проводит независимую оценку. Критерии
+   60 сейчас pending_anya_review: генерации — диагностика, не независимая приёмка.
+   Закрытые final20 разработчику не открывать. Без нового сайта 49,861 остаётся
+   единственным официальным результатом. ZIP/отправка на сайт не входят в задачу.
+
+### Команды продолжения (PowerShell)
+
+```powershell
+$baseCheckout = 'C:/Users/user/Documents/Codex/2026-11-12/files-mentioned-by-the-user-plan/outputs/mts-energytool-core'
+$codeV7 = "$baseCheckout-qa-cycle"
+$codeV6 = "$baseCheckout-baseline-qa"
+$pyVenv = "$baseCheckout/.venv/Scripts/python.exe"
+$qaRoot = "$baseCheckout/work/qa-cycle-2026-11-15"
+$dataRoot = "$baseCheckout/knowledge-base-work/data"
+Set-Location $codeV7
+git status --short
+lms ps
+& $pyVenv -X utf8 -m pytest -q
+```
+
+Новый прогон V7-dev (добавить `--resume` только для существующего паспорта
+с полностью совпадающими кодом, runner, входами и параметрами):
+
+```powershell
+& $pyVenv -X utf8 scripts/check_core_development.py --code-root $codeV7 --cases "$qaRoot/DANYOK/development/development.jsonl" --data-dir $dataRoot --output "$qaRoot/runs/v7-development"
+```
+
+Продолжить baseline-dev при прерывании:
+
+```powershell
+& $pyVenv -X utf8 scripts/check_core_development.py --code-root $codeV6 --cases "$qaRoot/DANYOK/development/development.jsonl" --data-dir $dataRoot --output "$qaRoot/runs/baseline-development" --resume
+```
+
+Перед judge/API задать только локальные параметры, не копировать `.env`:
+
+```powershell
+$env:CORE_DEMO='false'
+$env:LLM_BASE_URL='http://127.0.0.1:1234/v1'
+$env:LLM_API_KEY='local-verification-placeholder'
+$env:LLM_MODEL='energytool-eval'
+$env:TEMPERATURE='0'
+$env:MAX_TOKENS='1200'
+$env:MAX_WORKERS='1'
+$env:DATA_DIR=$dataRoot
+& $pyVenv -X utf8 scripts/judge_answers.py --questions "$dataRoot/demo_questions.csv" --reference "$dataRoot/demo_output.csv" --baseline "$qaRoot/runs/baseline-demo/answers.csv" --candidate "$qaRoot/runs/v7-demo-r6/answers.csv" --output "$qaRoot/judge-demo-v7-v6-r6.json" --resume
+& $pyVenv -X utf8 scripts/check_live_api_csv.py --protocol "$qaRoot/api-protocol.json" --output "$qaRoot/runs/v7-api-csv"
+```
+
+`--resume` судьи сохраняет завершённые пары, включая ошибки, не делает их
+успешными задним числом. Ошибки анализировать отдельно; для нового повтора
+использовать отдельный output. Формула: `100 * report.metrics.score`.
+WinRate исключает ничьи; если все пары ничьи, WinRate=0,5, итог=50.
+Для 100 в этой формуле нужны максимальные оценки всех сравнений, а не просто
+отсутствие падений кода. Собственный baseline и локальный judge отличаются от сайта.
+
+### Публикация и границы
+
+Публиковать конкретные файлы обычным commit/push в `codex/core-qa-cycle`;
+не применять force-push и не менять `main`/сохранённую V6. Личные отчёты Ани и
+коллеги три уже включены, не переписывать их от имени авторов. Перед остановкой
+обновить этот раздел: HEAD, реально завершённые шаги, ошибки, каталоги и ровно
+следующий запуск. Не утверждать наличие полного пакета, пока он не собран/проверен.
+
+## Предыдущий результат V7 и следующий шаг (история)
 
 Новый кандидат называется **V7**, контроль — **V6 (`5bf4d22`)**.
 Первое полное локальное сравнение demo18 (`v7-demo`, код `c7200d8`) дало
