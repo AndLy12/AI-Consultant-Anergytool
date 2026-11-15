@@ -114,7 +114,8 @@ def test_reflexive_requirement_still_excludes_unwanted_product(message):
 def test_report_recipient_synonym_finds_rso_without_claiming_product():
     chunks = make_chunks('platform.md', [('# Облачная платформа\n\n## Отчёты в РСО\n\n'
         'Экспорт отчёта в ресурсоснабжающую организацию.', None, None)], 1800)
-    chunks += make_chunks('privacy.md', [('# Конфиденциальность\n\nПридётся ли передавать данные.', None, None)], 1800)
+    chunks += make_chunks('privacy.md', [('# Конфиденциальность\n\n'
+        'Придётся ли передавать поставщику персональные данные о ресурсах?', None, None)], 1800)
     request = CoreRequest(message='Наша отчётность отправляется поставщику ресурсов?')
     assert search_intent(request).active == ()
     assert SearchIndex(tuple(chunks)).search_request(request, 1)[0].chunk.section == 'Отчёты в РСО'
