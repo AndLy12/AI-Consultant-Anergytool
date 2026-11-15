@@ -441,3 +441,47 @@ def test_reading_condition_is_not_borrowed_from_other_product():
     result = assemble({'status': 'answered', 'answer': 'Да, показания считываются.', 'evidence': ['D1']},
                       chunks, CoreRequest(message='Как работает сервис?'))
     assert 'верификац' not in result.answer
+
+
+def test_judge_resume_keeps_zero_ids_and_refuses_changed_inputs(tmp_path, monkeypatch):
+    """Продолжение не вызывает модель повторно и не смешивает разные ответы."""
+    import sys
+    from scripts import judge_answers as judge
+
+    paths = {}
+    for name, column, text in [('questions', 'question', 'Вопрос'),
+                               ('reference', 'answer', 'Справка'),
+                               ('baseline', 'answer', 'Старый'),
+                               ('candidate', 'answer', 'Новый')]:
+        path = tmp_path / (name + '.csv')
+        path.write_text(f'id,{column}\n007,{text}\n', encoding='utf-8')
+        paths[name] = path
+    output = tmp_path / 'judge.json'
+    arguments = ['judge_answers']
+    for name, path in {**paths, 'output': output}.items():
+        arguments.extend(['--' + name, str(path)])
+    monkeypatch.setattr(sys, 'argv', arguments)
+    monkeypatch.setattr(judge.Settings, 'from_environment', lambda: Settings(
+        tmp_path, base_url='http://unit.test/v1', api_key='test-placeholder', model='test'))
+
+    class Client:
+        def close(self):
+            pass
+
+    calls = []
+
+    def compare(client, question, reference, a, b, seconds):
+        calls.append((a, b))
+        return {'score_a': 1 if a == 'Новый' else 0}
+
+    monkeypatch.setattr(judge, 'QwenClient', lambda settings: Client())
+    monkeypatch.setattr(judge, 'compare', compare)
+    assert judge.main() == 0
+    report = json.loads(output.read_text(encoding='utf-8'))
+    assert report['cases'][0]['id'] == '007' and report['metrics']['score'] == 1
+    monkeypatch.setattr(sys, 'argv', arguments + ['--resume'])
+    assert judge.main() == 0 and len(calls) == 2
+    paths['candidate'].write_text('id,answer\n007,Другой\n', encoding='utf-8')
+    with pytest.raises(SystemExit) as error:
+        judge.main()
+    assert error.value.code == 2 and len(calls) == 2
