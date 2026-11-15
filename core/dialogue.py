@@ -27,7 +27,12 @@ PREPARATION_SECTIONS = {
     'поиск коммерческих потерь': 'для поиска коммерческих потерь',
     'выход на оптовый рынок': 'для анализа затрат и выхода на оптовый рынок',
 }
-CLAUSES = re.compile(r'[.!?;,\n]+|\s+\b(?:но|зато|а(?!\s+не\b))\b\s+', re.I)
+# «И» разделяет решения лишь при новом сказуемом. В перечислении
+# «панели и оптовый рынок не нужны» отрицание относится к обоим продуктам.
+CLAUSES = re.compile(
+    r'[.!?;,\n]+|\s+\b(?:но|зато|а(?!\s+не\b))\b\s+|'
+    r'\s+и\s+(?=(?:не\s+)?(?:нуж(?:ен|на|но|ны)|отказ\w*|'
+    r'рассматрива\w*|планиру\w*)\b)', re.I)
 RETURN_FIRST = re.compile(r'верн\w*[^.!?\n]{0,50}к\s+перв\w*\s+(?:вопрос|тем|вариант|продукт|решени)', re.I)
 # Отказ может стоять после названия продукта: «от панелей отказались».
 # Проверка двойного отрицания ниже относится и к этому порядку слов.
@@ -73,7 +78,9 @@ def _topic_events(text: str):
                 and re.search(r'прибор|сч[её]тчик|показан|электр|арендатор|энерго', text, re.I)
                 and not any(title == 'облачная платформа' and match for title, match in found)):
             found.append(('облачная платформа', re.search(r'един\w*\s+кабинет', clause, re.I)))
-        refusal = bool((REFUSAL.search(clause) or (not questioned and EXCLUDED.search(clause)))
+        # Отрицательный вопрос о необходимости ещё не является отказом:
+        # иначе для ответа «станция нам не нужна?» исчезнут солнечные источники.
+        refusal = bool(not questioned and (REFUSAL.search(clause) or EXCLUDED.search(clause))
                        and not DOUBLE_NEGATION.search(clause)
                        and not PROPERTY_ACTION.search(clause))
         for title, match in sorted((item for item in found if item[1]), key=lambda item: item[1].start()):
@@ -283,7 +290,10 @@ def summary_excerpts(texts: list[str], excluded: tuple[str, ...] = (), active: t
         correction.search(text)
         and re.search(r'перв\w*|втор\w*|друг\w*|одн\w*\s+из', text, re.I))
         for text in texts)
-    value = r'\d+(?:[ \u00a0]\d{3})*(?:[.,]\d+)?\s*(?:(?:тыс(?:яч\w*)?\.?|млн|миллион\w*)\s*)?'
+    # Не начинаем число с середины другого числа. Без этой границы длинная
+    # последовательность цифр без единицы проверялась со всех позиций
+    # и давала квадратичное время разбора допустимого входного сообщения.
+    value = r'(?<![\d.,])(?<!\d[ \u00a0])\d+(?:[ \u00a0]\d{3})*(?:[.,]\d+)?\s*(?:(?:тыс(?:яч\w*)?\.?|млн|миллион\w*)\s*)?'
     quantity = (r'(?:(?:не\s+(?:менее|более|ниже|выше)|от|до|около|примерно)\s+)?' + value
                 + r'(?:\s*(?:[-–—]|до)\s*' + value + r')?')
     patterns = (

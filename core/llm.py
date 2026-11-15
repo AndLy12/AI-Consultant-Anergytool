@@ -173,9 +173,16 @@ class QwenClient:
                         try:
                             body = json.loads(content)
                             choice = body['choices'][0]
+                            # Даже HTTP 200 может содержать неверный конверт.
+                            # Ошибка структуры должна допускать обычную попытку
+                            # исправления формата, как и некорректный JSON модели.
+                            if not isinstance(choice, dict):
+                                raise ValueError
                             if choice.get('finish_reason') == 'length':
                                 raise ModelResponseError('Модель исчерпала лимит токенов', 'truncated')
                             message = choice['message']
+                            if not isinstance(message, dict):
+                                raise ValueError
                             if message.get('tool_calls') or not isinstance(message.get('content'), str):
                                 raise ValueError
                             text = message['content'].strip()

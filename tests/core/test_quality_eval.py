@@ -552,3 +552,15 @@ def test_context_overflow_is_classified_after_provider_options_disabled(tmp_path
     assert 'Секретный текст' not in str(error.value)
     assert 'placeholder' not in str(error.value)
     assert len(calls) == 1
+
+
+@pytest.mark.parametrize('choice', [None, 17, 'секретный текст', {'message': None}, {'message': []}])
+def test_malformed_provider_envelope_is_model_response_error(tmp_path, choice):
+    """Некорректная структура ответа допускает исправление формата, не сетевой повтор."""
+    def handler(request):
+        return httpx.Response(200, json={'choices': [choice]})
+    client = QwenClient(Settings(tmp_path, base_url='http://unit.test/v1', model='model',
+                        api_key='placeholder', retries=0), httpx.MockTransport(handler))
+    with pytest.raises(ModelResponseError) as error:
+        client.complete([], time.monotonic() + 2)
+    assert 'секретный текст' not in str(error.value)

@@ -360,3 +360,72 @@ def test_named_objects_do_not_bypass_excluded_product_filter():
     assert '600 кВт' in draft
     assert 'только учёт' in draft
     assert 'солнечн' not in draft.lower()
+
+
+@pytest.mark.parametrize('message', [
+    'Не резюмируй пока.',
+    'Не перечисляй объекты для заявки.',
+    'Не надо подводить итоги.',
+    'Не собирай заявку.',
+])
+def test_explicit_card_opt_out_is_respected(message):
+    """Явный отказ от подготовки черновика действует и для альтернативных глаголов."""
+    request = CoreRequest(message=message, history=[
+        {'role': 'user', 'content': 'Склад, мощность 900 кВт. Нужен учёт.'}])
+    assert assemble({'status': 'insufficient_data'}, (), request).summary_draft is None
+
+
+def test_engine_repairs_malformed_provider_envelope(tmp_path):
+    """После неверного конверта вторая попытка возвращает консультацию с источником."""
+    chunks = make_chunks('training.md', [('Учёт доступен.', None, None)], 1800)
+    calls = []
+    def handler(request):
+        calls.append(json.loads(request.content))
+        if len(calls) == 1:
+            return httpx.Response(200, json={'choices': [None]})
+        return httpx.Response(200, json={'choices': [{'message': {'content': json.dumps({
+            'status': 'answered', 'answer': 'Учёт доступен.', 'evidence': ['D1']})}}]})
+    cfg = Settings(tmp_path, base_url='http://unit.test/v1', model='model', api_key='placeholder',
+                   retries=0, review_answers=False)
+    result = EnergytoolCore(cfg, chunks=chunks, client=QwenClient(cfg, httpx.MockTransport(handler))).respond(
+        CoreRequest(message='Учёт доступен?'))
+    assert len(calls) == 2
+    assert result.core_status == 'answered'
+    assert result.sources
+
+
+@pytest.mark.parametrize('message', [
+    'Не надо перечислять объекты для заявки.',
+    'Не нужно составлять резюме.',
+    'Не следует оформлять заявку.',
+    'Не хочу готовить заявку, просто расскажи об учёте.',
+])
+def test_modal_card_opt_out_is_respected(message):
+    """Модальные формы отказа не должны превращаться в заказ карточки."""
+    request = CoreRequest(message=message, history=[
+        {'role': 'user', 'content': 'Объект — склад, мощность 900 кВт.'}])
+    assert assemble({'status': 'insufficient_data'}, (), request).summary_draft is None
+
+
+@pytest.mark.parametrize("number", ["9" * 4000, "999 " * 2000])
+def test_long_number_without_unit_does_not_block_summary_parser(number):
+    """Число без единицы не должно запускать повторный поиск каждого суффикса."""
+    import time
+    from core.dialogue import summary_excerpts
+    text = 'Исправляю: ' + number + ' без единицы измерения.'
+    started = time.monotonic()
+    result = summary_excerpts([text])
+    elapsed = time.monotonic() - started
+    assert elapsed < 0.5
+    assert ''.join(result).count('9') == number.count('9')
+
+
+@pytest.mark.parametrize('value', ['1 200', '1\u00a0200', '1200,5', '1200.5'])
+def test_number_scan_optimization_preserves_valid_power_corrections(value):
+    """Граница числа сохраняет целые разряды и десятичную часть вместе с единицей."""
+    request = CoreRequest(message='Подготовь резюме.', history=[
+        {'role': 'user', 'content': 'Мощность 600 кВт.'},
+        {'role': 'user', 'content': f'Исправляю: мощность {value} кВт.'}])
+    draft = assemble({'status': 'insufficient_data'}, (), request).summary_draft
+    assert value + ' кВт' in draft
+    assert '600' not in draft
