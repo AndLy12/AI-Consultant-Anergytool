@@ -5,7 +5,7 @@ import re
 from core.dialogue import (load_profile_question, data_checklist_question,
                           data_sufficiency_question, PREPARATION_SECTIONS)
 
-PROMPT_VERSION = 'energytool-consultation-intent-2'
+PROMPT_VERSION = 'energytool-v7-grounding-1'
 SYSTEM_PROMPT = """Ты консультант МТС Energytool. Ответь по-русски на current_message с учётом history.
 Сформулируй ответ хорошего консультанта, обычно в 2–5 предложениях.
 1. Ответь на то, что просят сейчас в последней реплике: возможность, этап работы, состав данных или причину.
