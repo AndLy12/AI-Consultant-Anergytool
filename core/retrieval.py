@@ -7,7 +7,8 @@ from rank_bm25 import BM25Plus
 
 from core.documents import Chunk
 from core.dialogue import (TOPICS, search_query, search_intent, load_profile_question,
-                          data_checklist_question, data_sufficiency_question, PREPARATION_SECTIONS)
+                          data_checklist_question, data_sufficiency_question, PREPARATION_SECTIONS,
+                          consultation_focus_text)
 
 TOKEN = re.compile(r'[a-zа-яё0-9]+', re.IGNORECASE)
 STOP = {'и', 'в', 'во', 'на', 'с', 'со', 'к', 'ко', 'о', 'об', 'по', 'из', 'для',
@@ -207,6 +208,9 @@ class SearchIndex:
         Исключения продукта проверяются до добавления обязательного источника.
         """
         text = request.message
+        focus_text = consultation_focus_text(request)
+        solar_reserve = ('солнечные электростанции' in intent.active
+                         and re.search(r'резерв|автоном|авари|отключ|пропад\w*\s+электр', focus_text, re.I))
         headings = set()
         if ((re.search(r'продав\w*|поставщик\w*|энергосбыт', text, re.I)
                 and re.search(r'мтс|energytool', text, re.I)
@@ -219,8 +223,7 @@ class SearchIndex:
         if ('распознавание показаний' in intent.active
                 and re.search(r'точност|качеств|процент', text, re.I)):
             headings.add(('распознавание показаний', 'точность'))
-        if ('солнечные электростанции' in intent.active
-                and re.search(r'резерв|автоном|отключ|пропад\w*\s+электр', text, re.I)):
+        if solar_reserve:
             headings.add(('солнечные электростанции',
                           'если пропадёт электричество, станция обеспечит объект'))
         # «Порог парка приборов» нельзя сопоставлять с порогом мощности.
@@ -232,14 +235,28 @@ class SearchIndex:
                 headings.add(('', 'облачная платформа учёта'))
         # У большинства вопросов нет обязательного раздела. Не обходим
         # весь индекс, когда ни одно из условий выше не сработало.
-        if not headings:
+        if not headings and not solar_reserve:
             return ()
-        return tuple(Hit(chunk, 0.0, True) for group in self.sections
+        anchors = tuple(Hit(chunk, 0.0, True) for group in self.sections
                      for chunk in group[:1]
                      if self.allowed(chunk, intent)
                      and any((not title or title in chunk.title.lower())
                              and (chunk.section or '').lower() == section
                              for title, section in headings))
+        if solar_reserve:
+            # Для перехода к резерву нужен не только запрет сетевой станции,
+            # но и исходное условие работы накопителей. Находим его в базе,
+            # не зашивая состав оборудования или числовые обещания в ответ.
+            for group in self.sections:
+                first = group[0]
+                if ('солнечные электростанции' in first.title.lower()
+                        and self.allowed(first, intent)):
+                    body = '\n'.join(chunk.text for chunk in group)
+                    if re.search(r'накопител|аккумулятор', body, re.I) and re.search(r'заряд', body, re.I):
+                        if all(hit.chunk.chunk_id != first.chunk_id for hit in anchors):
+                            anchors += (Hit(first, 0.0, True),)
+                        break
+        return anchors
 
     def search_request(self, request, top_k=5):
         """Сохраняем общий поиск, выделяя место продукту, названному в диалоге.
@@ -370,13 +387,18 @@ class SearchIndex:
                 seen.update(c.chunk_id for c in fresh)
                 used += size
 
-        if hits and hits[0].required and re.search(
-                r'выработк\w*\s+не\s+совпад', hits[0].chunk.text, re.I):
+        if (hits and hits[0].required
+                and (intent is None or intent.active == ('солнечные электростанции',))
+                and re.search(
+                    r'выработк\w*\s+не\s+совпад', hits[0].chunk.text, re.I)):
             # Для вопроса о времени нагрузки оставляем исходную оговорку,
             # дневной профиль и резерв. Общие цены и диапазоны мощности здесь
             # провоцируют подмену показателя и не отвечают на текущий вопрос.
             first = hits[0].chunk
             add((first,))
+            for hit in hits:
+                if hit.required and hit.chunk.document_id == first.document_id:
+                    add(self.groups[self.group_key(hit.chunk)])
             for chunk in self.chunks:
                 section = (chunk.section or '').lower()
                 if chunk.document_id == first.document_id and (

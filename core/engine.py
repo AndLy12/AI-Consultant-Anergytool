@@ -5,7 +5,7 @@ import logging
 from threading import BoundedSemaphore
 from core.config import Settings
 from core.demo import DemoClient, demo_chunks
-from core.dialogue import bounded_history, search_query, search_intent
+from core.dialogue import bounded_history, search_query, build_consultation_state
 from core.documents import load_chunks
 from core.llm import QwenClient
 from core.prompts import build_messages, build_review_messages
@@ -54,6 +54,15 @@ class EnergytoolCore:
         history, truncated = bounded_history(request, self.settings.history_chars)
         # Поиск тоже использует только ограниченную историю, а не весь накопленный архив.
         bounded_request = CoreRequest(message=request.message, history=history)
+        # Один неизменяемый снимок передаётся генерации и обеим сборкам.
+        # Он локален respond: параллельные диалоги не разделяют факты клиента.
+        state = build_consultation_state(bounded_request)
+        if state.clarify_product:
+            return assemble(
+                {'status': 'clarification_needed', 'evidence': [],
+                 'question': 'Для какого продукта или вида работ нужно определить стоимость и о каком объекте идёт речь?'},
+                (), bounded_request, demo=self.settings.demo, truncated=truncated,
+                secret=self.settings.api_key, state=state)
         rerank = getattr(self.client, 'rerank', None) if self.settings.reranker_model else None
         candidate_count = max(16, self.settings.top_k * 2) if rerank else self.settings.top_k
         hits = self.index.search_request(bounded_request, candidate_count)
@@ -61,7 +70,7 @@ class EnergytoolCore:
         if not hits:
             raw = {'status': 'insufficient_data', 'evidence': []}
             result = assemble(raw, (), bounded_request, demo=self.settings.demo,
-                              truncated=truncated, secret=self.settings.api_key)
+                              truncated=truncated, secret=self.settings.api_key, state=state)
         else:
             # Один экземпляр ядра вызывается из разных диалогов: ограничение
             # одновременных запросов должно действовать и в вебе, а не только в CSV.
@@ -90,14 +99,14 @@ class EnergytoolCore:
                 context_started = time.monotonic()
                 # Исключения применяются до расходования бюджета. Если удалить
                 # чужие разделы лишь после сборки, они вытеснят нужные условия.
-                context_intent = search_intent(bounded_request)
+                context_intent = state.intent
                 chunks = tuple(c for c in self.index.context(
                     hits[:self.settings.top_k], self.settings.context_chars, request=bounded_request)
                     if self.index.allowed(c, context_intent))
                 if not chunks:
                     return assemble({'status': 'insufficient_data'}, (), bounded_request,
-                                    demo=self.settings.demo, truncated=truncated, secret=self.settings.api_key)
-                messages = build_messages(bounded_request, history, chunks, self.settings.api_key)
+                                    demo=self.settings.demo, truncated=truncated, secret=self.settings.api_key, state=state)
+                messages = build_messages(bounded_request, history, chunks, self.settings.api_key, state=state)
                 timings['context'] = time.monotonic() - context_started
                 # Исправление структуры и оснований имеет тот же дедлайн и слот
                 # параллельности. Ошибки доступа и сети здесь не повторяем.
@@ -106,7 +115,7 @@ class EnergytoolCore:
                     try:
                         raw = self.client.complete(messages, limit)
                         result = assemble(raw, chunks, bounded_request, demo=self.settings.demo,
-                                          truncated=truncated, secret=self.settings.api_key)
+                                          truncated=truncated, secret=self.settings.api_key, state=state)
                         break
                     except ModelResponseError:
                         if attempt == 1 or time.monotonic() >= limit:
@@ -134,7 +143,7 @@ class EnergytoolCore:
                             if isinstance(final, dict) and final.get('status') == 'answered' and checked.get('follow_up_question'):
                                 final = dict(final, question=checked['follow_up_question'])
                             reviewed = assemble(final, chunks, bounded_request, demo=False,
-                                                truncated=truncated, secret=self.settings.api_key)
+                                                truncated=truncated, secret=self.settings.api_key, state=state)
                             # Без замечаний сохраняем и текст, и исходный следующий
                             # шаг: отдельное поле review не должно добавлять новый
                             # вопрос без причины. reviewed всё равно проверен выше;

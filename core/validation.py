@@ -5,25 +5,12 @@ from copy import deepcopy
 import re
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 from core_contract import CoreResponse, CoreUnavailable, ModelResponseError, Source
-from core.dialogue import search_intent, summary_excerpts, data_checklist_question, APPROXIMATION
+from core.dialogue import (search_intent, summary_excerpts, data_checklist_question,
+                           summary_control_message, APPROXIMATION, build_consultation_state,
+                           SUMMARY_REQUEST, SUMMARY_DECLINED)
 from core.retrieval import tokens
 from core.config import redact_secret
 
-
-# Запрос на черновик распознаём по явному действию. Слово «итоговая»
-# в вопросе о стоимости не означает просьбу подготовить заявку.
-SUMMARY_REQUEST = re.compile(
-    r'\b(?:подытож\w*|резюмиру\w*)\b|'
-    r'\b(?:подготов\w*|состав\w*|собер\w*|сформир\w*|сдела\w*|оформ\w*|подвед\w*|перечисл\w*)'
-    r'\b[^.!?\n]{0,80}\b(?:резюме|заявк\w*|итог(?:и)?)\b|'
-    r'\b(?:можно|нужно|хочу)\s+(?:краткое\s+)?резюме\b', re.I)
-SUMMARY_DECLINED = re.compile(
-    r'\bне\s+(?:(?:надо|нужно|хочу)\s+)?(?:резюмир\w*|подытож\w*)\b|'
-    r'\bне\s+(?:(?:надо|нужно|хочу|следует)\s+)?'
-    r'(?:перечисл|состав|оформ|подготов|сдела|дела|собер|подвед)\w*'
-    r'[^.!?\n]{0,80}\b(?:заявк\w*|резюме|итог(?:и)?)\b|'
-    r'\bне\s+(?:хочу|нужн\w*|надо)\s+(?:краткое\s+)?резюме\b|'
-    r'\b(?:резюме|заявк\w*)\s+не\s+(?:нужн\w*|надо)', re.I)
 
 INLINE_ALIAS = re.compile(r'\s*(?:\((D\d+(?:\s*,\s*D\d+)*)\)|\[(D\d+(?:\s*,\s*D\d+)*)\])')
 # Просьба уточнить сведения уже является следующим шагом, даже без «?».
@@ -60,19 +47,14 @@ def checklist_question_relevant(question: str, message: str, sources: list[Sourc
     return bool(subject.intersection(context))
 
 
-VISIBLE_SUMMARY = re.compile(
-    r'\b(?:резюме|черновик|сводка|итог|итоги)(?:[ \t]+[^:.!?\n]{1,60})?[ \t]*[:—-]', re.I)
-
-
 def _visible_summary_covers_draft(answer, draft):
     """Не дублируем оформленное резюме, если оно покрывает актуальные выдержки.
 
     Лексическое покрытие консервативно: оно не доказывает весь смысл пересказа.
-    Одного заголовка недостаточно, числа и оговорки должны оставаться в ответе.
+    Вызывается только при явном запросе резюме. Заголовок не обязателен:
+    покрытие фактов важнее оформления; числа и оговорки остаются обязательны.
     """
-    if not VISIBLE_SUMMARY.search(answer):
-        return False
-    metadata = set(tokens('исправляю поправка уточняю уточнение'))
+    metadata = set(tokens('исправляю поправка уточняю уточнение по свежей выгрузке всё-таки'))
     facts = set(tokens(draft)) - metadata
     return bool(facts) and facts.issubset(tokens(answer))
 
@@ -235,18 +217,18 @@ def review_schema():
     return schema
 
 
-def assemble(raw, chunks, request, *, demo=False, truncated=False, secret='') -> CoreResponse:
+def assemble(raw, chunks, request, *, demo=False, truncated=False, secret='', state=None) -> CoreResponse:
     """Для связного ответа обязательны существующие источники и точные цитаты.
 
     Совпадение цитат не гарантирует логическую достоверность всего пересказа.
     Ответы старых клиентов без поля answer собираем из цитат, сохраняя контракт.
     """
-    summary_requested = bool(SUMMARY_REQUEST.search(request.message)
-                             and not SUMMARY_DECLINED.search(request.message))
+    state = state if state is not None else build_consultation_state(request)
+    summary_requested = state.summary_requested
     user_texts = [request.message] + [turn.content for turn in request.history if turn.role == 'user']
-    intent = search_intent(request) if summary_requested else None
+    intent = state.intent if summary_requested else None
     excluded = intent.excluded if intent else ()
-    summary_texts = summary_excerpts(user_texts[1:] + user_texts[:1], excluded, intent.active) if intent else user_texts
+    summary_texts = list(dict.fromkeys(fact.quote for fact in state.facts)) if intent else user_texts
     if isinstance(raw, dict) and raw.get('summary_draft') is not None:
         draft = raw['summary_draft']
         verified = (isinstance(draft, str) and bool(draft.strip()) and len(draft) <= 3000
@@ -370,11 +352,14 @@ def assemble(raw, chunks, request, *, demo=False, truncated=False, secret='') ->
         parts, size = [], 0
         candidates = []
         for text in summary_texts:
+            if summary_control_message(text):
+                continue
             if request.history and SUMMARY_REQUEST.search(text):
                 # Отдельное предложение с поручением может следовать за фактом
                 # в той же реплике. Сохраняем фактическую часть дословно.
                 candidates.extend(sentence for sentence in re.split(r'(?<=[.!?;])\s+', text)
-                                  if not SUMMARY_REQUEST.search(sentence))
+                                  if not SUMMARY_REQUEST.search(sentence)
+                                  and not summary_control_message(sentence))
             else:
                 candidates.append(text)
         for text in reversed(candidates):

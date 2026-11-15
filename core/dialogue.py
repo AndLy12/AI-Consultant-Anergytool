@@ -7,6 +7,21 @@ from core_contract import CoreRequest, Turn
 
 APPROXIMATION = r'около|примерно|приблизительно|ориентировочно|порядка|кажется|возможно|вероятно'
 
+# Один признак используется генерацией и экспортом: упоминание итоговой цены
+# не превращает ответ в заявку, а отказ от резюме имеет приоритет над просьбой.
+SUMMARY_REQUEST = re.compile(
+    r'\b(?:подытож\w*|резюмиру\w*)\b|'
+    r'\b(?:подготов\w*|состав\w*|собер\w*|сформир\w*|сдела\w*|оформ\w*|подвед\w*|перечисл\w*)'
+    r'\b[^.!?\n]{0,80}\b(?:резюме|заявк\w*|итог(?:и)?)\b|'
+    r'\b(?:можно|нужно|хочу)\s+(?:краткое\s+)?резюме\b', re.I)
+SUMMARY_DECLINED = re.compile(
+    r'\bне\s+(?:(?:надо|нужно|хочу)\s+)?(?:резюмир\w*|подытож\w*)\b|'
+    r'\bне\s+(?:(?:надо|нужно|хочу|следует)\s+)?'
+    r'(?:перечисл|состав|оформ|подготов|сдела|дела|собер|подвед)\w*'
+    r'[^.!?\n]{0,80}\b(?:заявк\w*|резюме|итог(?:и)?)\b|'
+    r'\bне\s+(?:хочу|нужн\w*|надо)\s+(?:краткое\s+)?резюме\b|'
+    r'\b(?:резюме|заявк\w*)\s+не\s+(?:нужн\w*|надо)', re.I)
+
 ROLE_LINE = re.compile(r'^\s*(user|пользователь|клиент|assistant|ассистент|консультант)\s*:\s*(.*)$', re.IGNORECASE)
 
 # Каталог нужен и поиску, и разбору намерения: два разных словаря расходились бы
@@ -294,20 +309,36 @@ def _current_card_messages(texts, active):
     return result
 
 
-def summary_excerpts(texts: list[str], excluded: tuple[str, ...] = (), active: tuple[str, ...] = ()) -> list[str]:
+def summary_control_message(text: str) -> bool:
+    """Отделяем простые поручения о резюме от сведений клиента.
+
+    Полное совпадение сохраняет реплику с дополнительными фактами: неизвестные
+    конструкции не удаляем только из-за слова «резюме» или «контакты».
+    """
+    return bool(re.fullmatch(
+        r'\s*(?:пожалуйста[, ]+)?(?:'
+        r'(?:сделай|составь|подготовь|оформи|собери)\s+(?:краткое\s+)?(?:резюме|сводку|черновик|заявку)'
+        r'|подытожь(?:\s+задачу)?|резюмируй)'
+        r'(?:\s+(?:для\s+менеджера|по\s+(?:диалогу|нашим\s+сообщениям)))?'
+        r'(?:[,. ;]+(?:неизвестные|выдуманные|несообщ[её]нные)\s+контакты\s+не\s+добавляй)?'
+        r'[.!?\s]*|\s*(?:неизвестные|выдуманные|несообщ[её]нные)\s+контакты\s+не\s+добавляй[.!?\s]*',
+        text, re.I))
+
+
+def _summary_records(texts, excluded=(), active=()):
     """Для явных поправок не копируем прежнее значение в запасной черновик.
 
-    Обрабатываем только названные с единицами параметры и явную коррекцию.
+    Обрабатываем параметры с единицами и явную коррекцию; короткую поправку
+    расхода без единицы связываем только с единственным прежним расходом.
     Каждый результат — исходная выдержка; разные объекты и неопределённые ссылки
     не сводим к одному значению. Это не замена смысловой проверке резюме моделью.
     """
+    texts = [text for text in texts if not summary_control_message(text)]
     original_texts = texts
     texts = _current_card_messages(texts, active)
     correction = re.compile(
-        r'исправля\w*|поправ\w*|уточняю|уточнение|ошибся|ошиблась|'
+        r'исправля\w*|поправ\w*|уточняю|уточнение|ошибся|ошиблась|вс[её][ -]таки|'
         r'\bне\s+(?!только\b)[^.!?\n]{1,40}\s+а\s+', re.I)
-    if not excluded and not any(correction.search(text) for text in texts):
-        return texts
     # При нескольких объектах не сводим мощность к общему слоту. Явные
     # метки уже разрешены выше; неопределённые поправки требуют подтверждения.
     separate_objects = any(_NAMED_POWER.search(text) or (
@@ -321,6 +352,10 @@ def summary_excerpts(texts: list[str], excluded: tuple[str, ...] = (), active: t
         not correction.search(text) and len({match.group(1).lower()
             for match in re.finditer(r'\b(склад|офис|завод|магазин)\w*', text, re.I)}) > 1
         for text in original_texts)
+    # Разнесённые по репликам объекты тоже нельзя объединять в общий слот.
+    separate_objects = separate_objects or len({match.group(1).lower()
+        for text in original_texts
+        for match in re.finditer(r'\b(склад|офис|завод|магазин)\w*', text, re.I)}) > 1
     # Не начинаем число с середины другого числа. Без этой границы длинная
     # последовательность цифр без единицы проверялась со всех позиций
     # и давала квадратичное время разбора допустимого входного сообщения.
@@ -356,6 +391,19 @@ def summary_excerpts(texts: list[str], excluded: tuple[str, ...] = (), active: t
         facts = [fact for fact in facts if fact[0] != 'power' or not any(
             other[0] == 'consumption' and other[2] <= fact[2] < other[3] for other in facts)]
         facts = [fact for fact in facts if not re.search(r'\b(?:не|вместо)\s+$', text[:fact[2]], re.I)]
+        if not separate_objects and correction.search(text) and not facts:
+            # Не изобретаем единицу: сохраняем новую фразу дословно. Убираем
+            # прежнее число только при одном расходе, отсутствии других чисел
+            # и совпадении периода. Мощность и количество приборов не выводим
+            # из такой короткой поправки; неоднозначность остаётся в истории.
+            previous = [quote for slot, quote in records if slot == 'consumption']
+            short = re.search(quantity + r'(?:в|за|/)\s*(?P<period>месяц\w*|год\w*|сут\w*)', text, re.I)
+            if (len(previous) == 1 and short
+                    and not re.search(r'\d', text[:short.start()] + text[short.end():])
+                    and not re.search(r'мощност|стоимост|цен[аыу]|руб|плат[её]ж|бюджет|выручк|'
+                                      r'площад|прибор|сч[её]тчик|сотрудник|объект', text, re.I)
+                    and re.search(r'(?:в|за|/)\s*' + short['period'] + r'\b', previous[0], re.I)):
+                facts.append(('consumption', short.group(), short.start(), short.end()))
         # Не разрываем десятичные числа и «тыс.» внутри уже найденной величины.
         boundaries = [0]
         for match in re.finditer(r'[.!?;,\n]+', text):
@@ -368,10 +416,20 @@ def summary_excerpts(texts: list[str], excluded: tuple[str, ...] = (), active: t
             clause = clause.strip()
             if not clause:
                 continue
-            if correction.search(text) and re.match(
-                    r'^(?:а\s+)?не\s+(?!менее\b|более\b|ниже\b|выше\b|меньше\b|больше\b)', clause, re.I):
+            if summary_control_message(clause):
                 continue
             present = [(slot, quote) for slot, quote, _, _ in facts if quote in clause]
+            if correction.search(text) and re.match(
+                    r'^(?:а\s+)?не\s+(?!менее\b|более\b|ниже\b|выше\b|меньше\b|больше\b)', clause, re.I) and not present:
+                continue
+            # Вопрос и гипотетический пример не подтверждают параметр клиента.
+            # В смешанном вопросе сохраняем число только при явной привязке
+            # к своему объекту; исходная история остаётся доступна модели.
+            if re.match(r'^(?:если|допустим|предположим|например)\b', clause, re.I):
+                continue
+            if text[end:end + 1] == '?':
+                if not (present and re.search(r'\b(?:у\s+нас|наш\w*|мо[йяеё]\w*|имеем)\b', clause, re.I)):
+                    continue
             if correction.search(text[:end]):
                 # Исправление в конце реплики заменяет и прежнее значение
                 # из её начала, а не только факты предыдущих сообщений.
@@ -391,7 +449,39 @@ def summary_excerpts(texts: list[str], excluded: tuple[str, ...] = (), active: t
             records.extend([(slot, quote) for slot, quote in present
                             if not any(quote != other and quote in other for _, other in present)]
                            or [(None, clause)])
-    return list(dict.fromkeys(quote for _, quote in records))
+            if present:
+                # При выделении числа не теряем соседнюю цель клиента. Берём
+                # только непрерывную часть до числа: старое значение не должно
+                # пережить поправку внутри нетипизированного полного предложения.
+                goal = re.search(r'\b(?:хочу|хотим|планирую|планируем|нужен|нужна|нужны|'
+                                 r'цель|задача|интересует)\b', clause, re.I)
+                if goal:
+                    tail = clause[goal.start():]
+                    limits = [clause.find(quote) - goal.start() for slot, quote in present
+                              if slot in {'power', 'consumption', 'meter_count'}
+                              and clause.find(quote) >= goal.start()]
+                    if limits:
+                        tail = tail[:min(limits)]
+                    number = re.search(r'[-+−]?\d', tail)
+                    if number:
+                        tail = tail[:number.start()]
+                    tail = re.sub(r'\s+(?:для|на|с|от|до|мощностью|мощности)\s*$', '', tail).strip(' :—-')
+                    if len(tail.split()) > 1 and not summary_control_message(tail):
+                        records.append(('goal', tail))
+    current = []
+    for kind, quote in records:
+        if active and (kind == 'goal' or (kind is None and not re.search(r'\d', quote))):
+            if re.search(r'\b(?:хочу|хотим|планирую|планируем|нужен|нужна|нужны|цель|задача|интересует)\b', quote, re.I):
+                topics = {title for title, enabled, _ in _topic_events(quote) if enabled}
+                if topics and not topics.intersection(active):
+                    continue
+        current.append((kind, quote))
+    return list(dict.fromkeys(current))
+
+
+def summary_excerpts(texts: list[str], excluded: tuple[str, ...] = (), active: tuple[str, ...] = ()) -> list[str]:
+    """Возвращаем дословные выдержки из общего механизма актуализации фактов."""
+    return list(dict.fromkeys(quote for _, quote in _summary_records(texts, excluded, active)))
 
 
 def search_query(request: CoreRequest) -> str:
@@ -422,12 +512,23 @@ def search_query(request: CoreRequest) -> str:
 
 
 def data_checklist_question(text: str) -> bool:
-    """Просьбу перечислить исходные данные отличаем от индивидуального расчёта."""
+    """Отделяем подготовку клиентских данных от вопроса о функциях продукта.
+
+    Одно слово «потребуется» или «расчёт» не назначает весь список подготовки.
+    Составная реплика с явной просьбой подготовить данные сохраняет оба запроса.
+    """
+    if (re.search(r'\b(?:собирает|переда[её]т|хранит|показывает|отображает|'
+                  r'поддерживает|поддерживаются|обрабатывает)\b', text, re.I)
+            and not re.search(r'подготов|предостав|собрать|передать|сообщить|'
+                              r'уточнить|с\s+чего\s+нач', text, re.I)):
+        return False
     return bool(re.search(
-        r'что\s+(?:нужно|требуется)\s+для\s+(?:предварительной\s+)?оценки\b|'
-        r'понадоб|потребу(?:ет|ют)ся|с чего(?:\s+\w+){0,2}\s+нач|'
+        r'что\s+(?:нужно|требуется)\s+для\s+(?:предварительн\w*\s+)?'
+        r'(?:оценк|расч[её]т|консультац|подключен)\w*\b|'
+        r'что(?:\s+\w+){0,3}\s+(?:понадоб\w*|потребу\w*)|'
+        r'с чего(?:\s+\w+){0,2}\s+нач|'
         r'каки\w*(?:\s+\w+){0,3}\s+(?:данн|сведен|параметр)|'
-        r'что(?:\s+\w+){0,4}\s+(?:предостав|подготов|узна|уточн|сообщ|собра|расч[её]т)', text, re.I))
+        r'что(?:\s+\w+){0,4}\s+(?:предостав|подготов|узна|уточн|сообщ|собра)', text, re.I))
 
 
 def data_sufficiency_question(text: str) -> bool:
@@ -446,3 +547,70 @@ def load_profile_question(text: str) -> bool:
     return bool(re.search(r'вечер|ноч', text, re.I)) and not re.search(
         r'типов|диапазон|мощност|стоим|цен|тариф|кровл|скат|фасад|площад|'
         r'\b\d+\s*(?:квт|мвт|киловатт)', text, re.I)
+
+
+def consultation_focus_text(request: CoreRequest) -> str:
+    """Короткая ссылка продолжает последний user-вопрос, а не вывод ассистента.
+
+    Старый фокус не навязывается самостоятельной новой реплике. Общая история
+    и разрешение продуктовых отказов по-прежнему обрабатываются отдельно.
+    """
+    text = request.message
+    if re.search(r'\bтогда\b|изменени\w*\s+конфигурац|для\s+(?:этого|такого)\s+варианта', text, re.I):
+        previous = next((turn.content for turn in reversed(request.history) if turn.role == 'user'), '')
+        text += '\n' + previous[-1500:]
+    return text
+
+
+@dataclass(frozen=True)
+class ClientFact:
+    """Тип и дословная выдержка; неизвестный тип не становится угаданным параметром."""
+    kind: str | None
+    quote: str
+
+
+@dataclass(frozen=True)
+class ConsultationState:
+    """Снимок одного ограниченного запроса; между диалогами не сохраняется.
+
+    Выдержки неполны при сложных ссылках и нескольких объектах. Это общая
+    опора генерации и сборки, а не доказательство смысловой достоверности.
+    """
+    intent: SearchIntent
+    facts: tuple[ClientFact, ...]
+    summary_requested: bool
+    preparation_requested: bool
+    sufficiency_requested: bool
+    focus: tuple[str, ...]
+    clarify_product: bool
+
+
+def build_consultation_state(request: CoreRequest) -> ConsultationState:
+    """Один раз актуализируем клиентские сведения и задачи ответа без вызова LLM."""
+    intent = search_intent(request)
+    texts = [turn.content for turn in request.history if turn.role == 'user'] + [request.message]
+    facts = tuple(ClientFact(kind, quote) for kind, quote in
+                  _summary_records(texts, intent.excluded, intent.active))
+    focus_text = consultation_focus_text(request)
+    focus = []
+    if re.search(r'резерв|автоном|авари|отключ|пропад\w*\s+электр', focus_text, re.I):
+        if not re.search(r'(?:резерв|автоном\w*)\s+не\s+(?:нуж|требу)|'
+                         r'не\s+нуж\w*\s+(?:резерв|автоном)', request.message, re.I):
+            focus.append('reserve')
+    if re.search(r'вечер|ноч|профил\w*\s+(?:нагруз|потреблен)', focus_text, re.I):
+        focus.append('load_profile')
+    # Отдельное требование точной цены без выбранного продукта нельзя
+    # удовлетворять ценником первого найденного документа. Составной вопрос
+    # оставляем общей генерации, чтобы не потерять остальные запрошенные части.
+    clarify_product = bool(
+        not intent.active
+        and re.search(r'\b(?:назови|назовите|скажи|скажите|рассчитай|посчитай)\b', request.message, re.I)
+        and re.search(r'точн\w*|итогов\w*', request.message, re.I)
+        and re.search(r'цен[ауы]|стоимост', request.message, re.I)
+        and not re.search(r'\b(?:и|также|ещ[её])\b|[;\n]', request.message, re.I)
+        and request.message.count('?') <= 1)
+    return ConsultationState(
+        intent, facts,
+        bool(SUMMARY_REQUEST.search(request.message) and not SUMMARY_DECLINED.search(request.message)),
+        data_checklist_question(request.message), data_sufficiency_question(request.message), tuple(focus),
+        clarify_product)
