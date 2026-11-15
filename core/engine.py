@@ -131,16 +131,11 @@ class EnergytoolCore:
                                 final = dict(final, question=checked['follow_up_question'])
                             reviewed = assemble(final, chunks, bounded_request, demo=False,
                                                 truncated=truncated, secret=self.settings.api_key)
-                            if checked.get('issues') == [] and isinstance(checked.get('result'), dict):
-                                # Проверка без замечаний не должна незаметно сокращать
-                                # правильный ответ и терять условия/следующий шаг.
-                                # reviewed всё равно валидируется: неисправный review
-                                # сохраняет предупреждение, а не маскируется успехом.
-                                if checked.get('follow_up_question'):
-                                    result = assemble(dict(raw, question=checked['follow_up_question']),
-                                        chunks, bounded_request, demo=False, truncated=truncated,
-                                        secret=self.settings.api_key)
-                            else:
+                            # Без замечаний сохраняем и текст, и исходный следующий
+                            # шаг: отдельное поле review не должно добавлять новый
+                            # вопрос без причины. reviewed всё равно проверен выше;
+                            # технический сбой сохраняет прежнее предупреждение.
+                            if not (checked.get('issues') == [] and isinstance(checked.get('result'), dict)):
                                 result = reviewed
                         except CoreUnavailable:
                             result.warnings.append('Дополнительная проверка ответа не завершена.')

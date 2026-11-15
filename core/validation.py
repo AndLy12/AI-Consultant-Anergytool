@@ -40,7 +40,8 @@ def checklist_question_relevant(question: str, message: str, sources: list[Sourc
     """Отдельное уточнение после списка должно иметь предмет в запросе или цитатах.
 
     Это консервативный лексический фильтр, а не проверка смысла вопроса моделью.
-    Общие слова «объект» и «данные» не доказывают полезность нового параметра.
+    Общие слова «объект», «данные» и предложение провести расчёт не доказывают
+    полезность нового параметра. Известность и необходимость проверяет модель.
     Используем нормализацию поиска, сохраняя общие термины и единицы одинаковыми.
     """
     def words(text):
@@ -48,7 +49,8 @@ def checklist_question_relevant(question: str, message: str, sources: list[Sourc
         return set(tokens(text))
 
     generic = words('какой какая какие какова каковы сколько объект данные параметры '
-                    'уточните сообщите подскажите назовите пожалуйста уже установлен')
+                    'уточните сообщите подскажите назовите пожалуйста уже установлен '
+                    'сделать провести начать продолжить расчёт оценка консультация шаг')
     subject = words(question) - generic
     context = words(message + '\n' + '\n'.join(source.excerpt for source in sources))
     return bool(subject.intersection(context))
@@ -244,7 +246,9 @@ def assemble(raw, chunks, request, *, demo=False, truncated=False, secret='') ->
     if selected.status == 'answered':
         answer = (selected.answer.strip() if selected.answer is not None
                   else 'В материалах базы найдено:\n\n' + '\n\n'.join(lines))
-        had_question = answer.rstrip().endswith('?')
+        # Вопрос может находиться перед пояснением, а не в конце текста.
+        # В таком случае отдельный question не должен добавлять второй вопрос.
+        had_question = '?' in answer
         photo_docs = {s.document_id for s in sources if 'распознавание показаний' in s.title.lower()}
         commercial_verification = re.search(
             r'(?:коммерческ\w*\s+уч[её]т|начислен\w*)[^.!?\n]{0,180}'
