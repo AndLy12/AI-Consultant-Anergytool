@@ -121,8 +121,7 @@ class QwenClient:
                     # Без диагностики сначала снимаем JSON-режим, сохраняя настройку
                     # мышления. Все попытки разделяют исходный дедлайн; тело ошибки
                     # читаем с ограничением размера и не выводим в журнал.
-                    if response.status_code in {400, 422} and (
-                            'reasoning_effort' in payload or 'chat_template_kwargs' in payload or 'response_format' in payload):
+                    if response.status_code in {400, 422}:
                         error = bytearray()
                         async for part in response.aiter_bytes():
                             error.extend(part[:max(0, 8192 - len(error))])
@@ -140,6 +139,11 @@ class QwenClient:
                             raise ProviderError('context_length', 'Контекст запроса превышает лимит модели')
                         options = [name for name in ('response_format', 'reasoning_effort', 'chat_template_kwargs')
                                    if name in payload]
+                        # После согласования возможностей провайдера расширений
+                        # может уже не быть. Длину всё равно диагностируем выше,
+                        # остальные 400/422 не повторяем как сетевой сбой.
+                        if not options:
+                            raise CoreUnavailable('API вернул неподдерживаемый HTTP-статус')
                         rejected = next((name for name in options if name in detail), options[0])
                         flag = {'response_format': 'use_json_mode',
                                 'reasoning_effort': 'use_reasoning_effort',

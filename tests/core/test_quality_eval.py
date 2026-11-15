@@ -531,3 +531,24 @@ def test_reviewer_rejects_invalid_envelope_without_exposing_content(tmp_path, re
         QwenClient(cfg, httpx.MockTransport(handler)).review([], time.monotonic() + 2)
     assert 'Ошибок нет' not in str(error.value)
     assert 'placeholder' not in str(error.value)
+
+
+@pytest.mark.parametrize('status', [400, 422])
+def test_context_overflow_is_classified_after_provider_options_disabled(tmp_path, status):
+    """Диагноз длины не зависит от того, поддерживает ли сервер JSON-режим."""
+    from core_contract import ProviderError
+    calls = []
+    def handler(request):
+        calls.append(request)
+        return httpx.Response(status, json={'error': {
+            'code': 'context_length_exceeded', 'message': 'Секретный текст запроса placeholder'}})
+
+    client = QwenClient(Settings(tmp_path, base_url='http://unit.test/v1',
+                        model='model', api_key='placeholder'), httpx.MockTransport(handler))
+    client.use_json_mode = client.use_reasoning_effort = client.use_thinking_option = False
+    with pytest.raises(ProviderError) as error:
+        client.complete([], time.monotonic() + 2)
+    assert error.value.category == 'context_length'
+    assert 'Секретный текст' not in str(error.value)
+    assert 'placeholder' not in str(error.value)
+    assert len(calls) == 1

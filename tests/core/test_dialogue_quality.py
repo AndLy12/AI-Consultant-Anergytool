@@ -288,3 +288,20 @@ def test_card_keeps_current_facts(history, expected, absent):
     draft = assemble({'status': 'insufficient_data'}, (), request).summary_draft
     assert all(value in draft for value in expected)
     assert all(value not in draft for value in absent)
+
+
+def test_explicit_object_list_for_application_creates_card():
+    """Команда из разработческой цепочки явно заказывает черновик заявки."""
+    request = CoreRequest(message='Перечисли оба объекта для заявки.', history=[
+        {'role': 'user', 'content': 'Объект А имеет 600 кВт, объект Б — 1200 кВт.'}])
+    result = assemble({'status': 'insufficient_data'}, (), request)
+    assert result.summary_draft
+    assert 'Объект А имеет 600 кВт' in result.summary_draft
+    assert 'объект Б — 1200 кВт' in result.summary_draft
+
+
+def test_enumerating_product_conditions_does_not_order_card():
+    """Перечисление свойств продукта само по себе не является заказом заявки."""
+    request = CoreRequest(message='Перечисли условия подключения станции.')
+    result = assemble({'status': 'insufficient_data'}, (), request)
+    assert result.summary_draft is None
