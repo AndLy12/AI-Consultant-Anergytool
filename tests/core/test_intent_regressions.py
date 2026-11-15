@@ -148,6 +148,18 @@ def test_negated_exclusion_and_exclusion_as_property_keep_product(message):
     assert 'солнечные электростанции' not in intent.excluded
 
 
+@pytest.mark.parametrize('message', [
+    'Солнечная станция на 700 кВт исключена из рассмотрения?',
+    'Панели исключены из типовых проектов?',
+])
+def test_question_about_exclusion_is_not_a_decision_to_refuse(index, message):
+    request = CoreRequest(message=message)
+    intent = search_intent(request)
+    assert 'солнечные электростанции' in intent.active
+    assert 'солнечные электростанции' not in intent.excluded
+    assert any('Солнечные' in h.chunk.title for h in index.search_request(request, 5))
+
+
 def test_return_reactivates_excluded_product(index):
     request = CoreRequest(message='Вернёмся к первому варианту. Что потребуется?', history=[
         {'role': 'user', 'content': 'Нужна солнечная станция.'},

@@ -33,7 +33,8 @@ RETURN_FIRST = re.compile(r'верн\w*[^.!?\n]{0,50}к\s+перв\w*\s+(?:во�
 # Проверка двойного отрицания ниже относится и к этому порядку слов.
 # «Не требуются» описывает отказ, а «не требуют обслуживания» — свойство
 # продукта. Нельзя отбрасывать продукт по общему префиксу «требу».
-REFUSAL = re.compile(r'\bне\s+(?:нуж(?:ен|на|но|ны)|надо|интерес\w*|рассматрива\w*|планиру\w*|хот\w*|требу(?:ет|ют)ся)\b|\bотказ\w*\s+от\b|\bот\s+[^.!?;\n]{0,100}\bотказ\w*|\bисключ[её]н(?:а|о|ы)?\b', re.I)
+REFUSAL = re.compile(r'\bне\s+(?:нуж(?:ен|на|но|ны)|надо|интерес\w*|рассматрива\w*|планиру\w*|хот\w*|требу(?:ет|ют)ся)\b|\bотказ\w*\s+от\b|\bот\s+[^.!?;\n]{0,100}\bотказ\w*', re.I)
+EXCLUDED = re.compile(r'\bисключ[её]н(?:а|о|ы)?\b', re.I)
 DOUBLE_NEGATION = re.compile(r'\bне\s+(?:(?:мож\w*|буд\w*|хот\w*|планиру\w*)\s+)?отказ\w*\b|\bне\s+переста\w*\s+рассматрива\w*|\bне\s+исключ[её]н(?:а|о|ы)?\b', re.I)
 PROPERTY_ACTION = re.compile(r'менять|замен\w*|покупать|устанавливать|передавать|оплачивать|подключать|обслужива\w*|очища\w*|мыть|ремонтир\w*|чистить', re.I)
 
@@ -46,6 +47,19 @@ class SearchIntent:
     query: str
 
 
+def _clauses_with_questions(text: str):
+    """Сохраняем вопросительный знак своей части, а не всего сообщения.
+
+    Отказ в первом предложении остаётся отказом, даже если следующее содержит
+    вопрос. Сам вопрос «проект исключён?» не является выбором клиента.
+    """
+    start = 0
+    for separator in CLAUSES.finditer(text):
+        yield text[start:separator.start()], '?' in separator.group()
+        start = separator.end()
+    yield text[start:], False
+
+
 def _topic_events(text: str):
     """Разбираем отказ в пределах части фразы, сохраняя отрицательные свойства.
 
@@ -53,13 +67,14 @@ def _topic_events(text: str):
     Общий отказ от перечисления относится к каждому названному продукту.
     Неуверенные конструкции остаются поисковыми данными, не доказанными фактами.
     """
-    for clause in CLAUSES.split(text):
+    for clause, questioned in _clauses_with_questions(text):
         found = [(title, re.search(pattern, clause, re.I)) for pattern, title in TOPICS]
         if (re.search(r'един\w*\s+кабинет', clause, re.I)
                 and re.search(r'прибор|сч[её]тчик|показан|электр|арендатор|энерго', text, re.I)
                 and not any(title == 'облачная платформа' and match for title, match in found)):
             found.append(('облачная платформа', re.search(r'един\w*\s+кабинет', clause, re.I)))
-        refusal = bool(REFUSAL.search(clause) and not DOUBLE_NEGATION.search(clause)
+        refusal = bool((REFUSAL.search(clause) or (not questioned and EXCLUDED.search(clause)))
+                       and not DOUBLE_NEGATION.search(clause)
                        and not PROPERTY_ACTION.search(clause))
         for title, match in sorted((item for item in found if item[1]), key=lambda item: item[1].start()):
             prefix = clause[:match.start()]
