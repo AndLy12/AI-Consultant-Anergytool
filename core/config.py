@@ -94,7 +94,9 @@ class Settings:
             raise CoreUnavailable('Нужны LLM_BASE_URL, LLM_API_KEY и LLM_MODEL либо их платформенные аналоги')
         try:
             url = urlsplit(self.base_url)
-            valid = (url.scheme in {'http', 'https'} and url.hostname and not url.username
+            # urlsplit откладывает проверку порта до обращения к свойству.
+            port = url.port
+            valid = (url.scheme in {'http', 'https'} and url.hostname and port != 0 and not url.username
                      and not url.password and not url.query and not url.fragment)
             if not valid or any(c in self.api_key for c in '\r\n'):
                 raise ValueError

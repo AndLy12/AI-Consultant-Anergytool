@@ -137,6 +137,18 @@ class QwenClient:
                             # из-за длинной истории отключать формат и управление
                             # мышлением для всех последующих диалогов этого клиента.
                             raise ProviderError('context_length', 'Контекст запроса превышает лимит модели')
+                        # Явная ошибка основного параметра не является отказом
+                        # от расширений. Иначе один неверный model отключал JSON
+                        # для всех следующих диалогов и вызывал лишние обращения.
+                        try:
+                            error_body = json.loads(detail)
+                        except ValueError:
+                            error_body = None
+                        error_info = error_body.get('error') if isinstance(error_body, dict) else None
+                        param = error_info.get('param') if isinstance(error_info, dict) else None
+                        if isinstance(param, str) and param.split('.')[0].split('[')[0] in {
+                                'model', 'messages', 'temperature', 'max_tokens'}:
+                            raise ProviderError('invalid_request', 'API отклонил параметры запроса')
                         options = [name for name in ('response_format', 'reasoning_effort', 'chat_template_kwargs')
                                    if name in payload]
                         # После согласования возможностей провайдера расширений
@@ -180,6 +192,11 @@ class QwenClient:
                                 raise ValueError
                             if choice.get('finish_reason') == 'length':
                                 raise ModelResponseError('Модель исчерпала лимит токенов', 'truncated')
+                            # Отфильтрованный ответ или запрос вызова инструмента
+                            # не являются завершённой консультацией, даже если в
+                            # content случайно лежит синтаксически допустимый JSON.
+                            if choice.get('finish_reason') not in {None, 'stop'}:
+                                raise ModelResponseError('Модель не завершила ответ', 'incomplete')
                             message = choice['message']
                             if not isinstance(message, dict):
                                 raise ValueError

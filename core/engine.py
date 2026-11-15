@@ -23,6 +23,8 @@ class EnergytoolCore:
     Это позволяет одному экземпляру обслуживать независимые диалоги.
     """
     def __init__(self, settings: Settings, chunks=None, client=None, deadline=None):
+        if deadline is not None and time.monotonic() >= deadline:
+            raise CoreUnavailable('Истекло время подготовки ядра')
         self.settings = settings
         if not settings.demo:
             settings.validate_provider()
@@ -30,6 +32,8 @@ class EnergytoolCore:
             demo_chunks(settings.chunk_chars) if settings.demo else load_chunks(settings, deadline))
         if not self.chunks:
             raise CoreUnavailable('Нет фрагментов для поиска')
+        if deadline is not None and time.monotonic() >= deadline:
+            raise CoreUnavailable('Истекло время подготовки ядра')
         self.index = SearchIndex(self.chunks)
         if deadline is not None and time.monotonic() >= deadline:
             raise CoreUnavailable('Истекло время построения индекса')

@@ -95,18 +95,22 @@ def write_submission(path: Path, rows):
             raise ValueError('Некорректные данные для submission.csv')
         seen.add(row_id)
     path.parent.mkdir(parents=True, exist_ok=True)
-    with tempfile.NamedTemporaryFile(mode='w', encoding='utf-8', newline='', dir=path.parent,
-                                     delete=False, suffix='.tmp') as stream:
-        name = stream.name
-        writer = csv.writer(stream, lineterminator='\n')
-        writer.writerow(('id', 'answer'))
-        writer.writerows(rows)
-        stream.flush()
-        os.fsync(stream.fileno())
+    name = None
     try:
+        with tempfile.NamedTemporaryFile(mode='w', encoding='utf-8', newline='', dir=path.parent,
+                                         delete=False, suffix='.tmp') as stream:
+            name = stream.name
+            writer = csv.writer(stream, lineterminator='\n')
+            writer.writerow(('id', 'answer'))
+            writer.writerows(rows)
+            stream.flush()
+            os.fsync(stream.fileno())
         os.replace(name, path)
     finally:
-        Path(name).unlink(missing_ok=True)
+        # Ошибка записи/flush/fsync тоже оставляет временный файл: убираем
+        # его, сохраняя прежний результат атомарной записи.
+        if name is not None:
+            Path(name).unlink(missing_ok=True)
 
 
 def validate_submission(questions_path: Path, output_path: Path):
@@ -133,8 +137,8 @@ def run(settings: Settings, core=None) -> int:
     questions = load_questions(settings.questions_path)
     answers = [TECHNICAL_ANSWER for _ in questions]
     output = settings.output_path
-    if output.resolve() == settings.questions_path.resolve():
-        raise ValueError('Нельзя записывать ответы поверх исходных вопросов')
+    if settings.questions_path.resolve() in {output.resolve(), output.with_suffix('.report.json').resolve()}:
+        raise ValueError('Нельзя записывать ответы или отчёт поверх исходных вопросов')
     write_submission(output, [(q.id, answers[i]) for i, q in enumerate(questions)])
     failures = completed = 0
     review_incomplete = 0
@@ -143,7 +147,7 @@ def run(settings: Settings, core=None) -> int:
     initialized = core is not None
     owned = core is None
     try:
-        if core is None:
+        if core is None and questions:
             config = replace(CoreSettings.from_environment(), data_dir=settings.data_dir)
             # Явный CORE_KB_PATH и основной каталог базы сохраняют приоритет.
             # Альтернативные имена нужны для раскладки из официального примера ZIP.

@@ -60,7 +60,7 @@ def make_chunks(name: str, blocks: list[tuple[str, str | None, int | None]], siz
         text = clean_text(raw)
         section = initial_section
         section_path = [initial_section] if initial_section else []
-        for paragraph in re.finditer(r'\S[\s\S]*?(?=\n\s*\n|\Z)', text):
+        for paragraph in re.finditer(r'\S[\s\S]*?(?=\n\s*\n|\n(?=#{1,6}[ \t]+)|\Z)', text):
             paragraph_text = paragraph.group().strip()
             match = re.match(r'^(#{1,6})\s+([^\n]+)', paragraph_text)
             if match:
@@ -178,12 +178,19 @@ def _validate_zip(content: bytes):
             seen.add(item.filename)
 
 
+def _check_preparation_deadline(deadline):
+    """Проверяем бюджет перед чтением и после блокирующего разбора документа."""
+    if deadline is not None and time.monotonic() >= deadline:
+        raise CoreUnavailable('Истекло время подготовки базы')
+
+
 def load_chunks(settings, deadline=None) -> tuple[Chunk, ...]:
     """По умолчанию читаем только knowledge-base.zip или каталог knowledge-base.
 
     Не сканируем весь DATA_DIR: там находятся вопросы, чужие ответы и служебные файлы.
     Для собственного формата базы путь задаётся явно через CORE_KB_PATH.
     """
+    _check_preparation_deadline(deadline)
     path = settings.kb_path
     if path is None:
         zipped = settings.data_dir / 'knowledge-base.zip'
@@ -199,6 +206,7 @@ def load_chunks(settings, deadline=None) -> tuple[Chunk, ...]:
             _validate_zip(content)
             with zipfile.ZipFile(io.BytesIO(content)) as archive:
                 for info in sorted(archive.infolist(), key=lambda x: x.filename):
+                    _check_preparation_deadline(deadline)
                     if not info.is_dir():
                         if Path(info.filename).suffix.lower() not in SUPPORTED:
                             raise CoreUnavailable('В базе есть неподдерживаемый формат; требуется разбор состава')
@@ -206,6 +214,7 @@ def load_chunks(settings, deadline=None) -> tuple[Chunk, ...]:
         elif path.is_dir():
             total_bytes = 0
             for file in sorted(path.rglob('*')):
+                _check_preparation_deadline(deadline)
                 if file.is_symlink():
                     raise CoreUnavailable('Символьные ссылки в базе не поддерживаются')
                 if file.is_file():
@@ -226,9 +235,9 @@ def load_chunks(settings, deadline=None) -> tuple[Chunk, ...]:
     chunks = []
     total_text = 0
     for name, content in files:
-        if deadline is not None and time.monotonic() >= deadline:
-            raise CoreUnavailable('Истекло время подготовки базы')
+        _check_preparation_deadline(deadline)
         blocks = read_blocks(name, content)
+        _check_preparation_deadline(deadline)
         total_text += sum(len(block[0]) for block in blocks)
         if total_text > MAX_TOTAL_TEXT_CHARS:
             raise CoreUnavailable('Объём извлечённого текста превышает лимит baseline')
