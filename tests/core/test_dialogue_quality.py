@@ -107,6 +107,49 @@ def test_answer_without_parameter_request_keeps_useful_follow_up():
     assert result.answer.endswith('Какая модель модуля установлена?')
 
 
+@pytest.mark.parametrize('issues,expected', [([], 'Подключение допустимо после проверки модели. Следующий шаг — сверить маркировку.'),
+                                            (['Убрано неподтверждённое уточнение'], 'Нужно проверить совместимость модели.')])
+def test_review_changes_valid_draft_only_when_it_reports_a_reason(tmp_path, issues, expected):
+    chunks = make_chunks('training.md', [('Подключение допустимо после проверки модели.', None, None)], 1800)
+
+    class Client:
+        def complete(self, messages, deadline):
+            return {'status': 'answered', 'answer':
+                'Подключение допустимо после проверки модели. Следующий шаг — сверить маркировку.',
+                'evidence': ['D1']}
+
+        def review(self, messages, deadline):
+            return {'issues': issues, 'follow_up_question': None, 'result': {
+                'status': 'answered', 'answer': 'Нужно проверить совместимость модели.', 'evidence': ['D1']}}
+
+        def close(self):
+            pass
+
+    cfg = Settings(tmp_path, base_url='http://unit.test/v1', model='model', api_key='placeholder')
+    assert EnergytoolCore(cfg, chunks=chunks, client=Client()).respond(
+        CoreRequest(message='Нужно проверить модель.')).answer == expected
+
+
+def test_review_with_no_issues_but_invalid_sources_is_still_reported_incomplete(tmp_path):
+    chunks = make_chunks('training.md', [('Подключение допустимо после проверки модели.', None, None)], 1800)
+
+    class Client:
+        def complete(self, messages, deadline):
+            return {'status': 'answered', 'answer': 'Нужно проверить модель.', 'evidence': ['D1']}
+
+        def review(self, messages, deadline):
+            return {'issues': [], 'follow_up_question': None, 'result': {
+                'status': 'answered', 'answer': 'Подключение допустимо.', 'evidence': []}}
+
+        def close(self):
+            pass
+
+    cfg = Settings(tmp_path, base_url='http://unit.test/v1', model='model', api_key='placeholder')
+    response = EnergytoolCore(cfg, chunks=chunks, client=Client()).respond(CoreRequest(message='Нужно проверить модель.'))
+    assert response.answer == 'Нужно проверить модель.'
+    assert 'Дополнительная проверка ответа не завершена.' in response.warnings
+
+
 @pytest.mark.parametrize('new', [
     'мощность 900 кВт, а не 600 кВт',
     'мощность не менее 900 кВт',
