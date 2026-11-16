@@ -7,6 +7,10 @@
  *   идентификатором и текстом возвращает сохранённый ответ и не вызывает модель снова;
  * - после сбоя ядра (503) сообщение остаётся failed, и повтор требует НОВОГО request_id;
  * - вторая генерация в том же диалоге отклоняется (409), поэтому отправка блокируется.
+ *
+ * Раскладка по макету Figma (кадры 9:2, 18:429, 20:712): лента по центру белой панели
+ * шириной 797 px, поле ввода снизу. Кнопки «Новый диалог» и «Оставить заявку» стоят
+ * в левой колонке; их нажатие приходит сюда через prop action.
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
@@ -20,8 +24,17 @@ import type { LeadStage } from './LeadPanel'
 import MessageBubble from './MessageBubble'
 import StartSuggestions from './StartSuggestions'
 
+/** Действие, запрошенное кнопкой левой колонки. */
+export type ChatAction = 'new-dialog' | 'lead'
+
 type Props = {
   debug: boolean
+  /** Нажатие в колонке; выполняется, когда активный диалог загружен. */
+  action: ChatAction | null
+  /** Сообщаем App, что действие выполнено, чтобы оно не повторилось. */
+  onActionHandled: () => void
+  /** Смена диалога или первое сообщение в нём: колонке нужно обновить историю. */
+  onDialogState: (id: string | null) => void
   onSessionExpired: () => void
 }
 
@@ -43,7 +56,30 @@ function buildSummaryFallback(messages: Message[]): string {
   return `Запрос клиента:\n${lines.join('\n')}`.slice(0, 4000)
 }
 
-export default function ChatScreen({ debug, onSessionExpired }: Props) {
+/** Как часто перечитываем диалог, пока backend готовит ответ на сообщение из истории. */
+const WAIT_POLL_MS = 1500
+
+/**
+ * Неудачная отправка, восстановленная из истории после перезагрузки страницы.
+ *
+ * Состояние «ошибка + Повторить» живёт в памяти и пропадает при F5, а backend
+ * хранит такое сообщение со статусом failed. Если оно последнее в диалоге,
+ * снова предлагаем повтор. Прежний request_id backend для неудачного сообщения
+ * не принимает, поэтому повтор всегда идёт с новым идентификатором.
+ */
+function failedFromHistory(messages: Message[]): FailedSend | null {
+  const last = messages[messages.length - 1]
+  if (!last || last.role !== 'user' || last.status !== 'failed') return null
+  return {
+    content: last.content,
+    requestId: last.request_id,
+    text: 'Ответ на это сообщение не получен из-за сбоя сервиса.',
+    technical: true,
+    fresh: true,
+  }
+}
+
+export default function ChatScreen({ debug, action, onActionHandled, onDialogState, onSessionExpired }: Props) {
   const [dialog, setDialog] = useState<DialogWithMessages | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
@@ -53,11 +89,19 @@ export default function ChatScreen({ debug, onSessionExpired }: Props) {
   const [card, setCard] = useState<Application | null>(null)
   const [leadStage, setLeadStage] = useState<LeadStage>('hidden')
   const [askNewDialog, setAskNewDialog] = useState(false)
-  const [askClose, setAskClose] = useState(false)
 
   // Предложение заявки не должно появляться снова после отказа пользователя.
   const declinedOffer = useRef<string>('')
   const feedEnd = useRef<HTMLDivElement>(null)
+  /**
+   * Создание диалога, которое сейчас выполняется (или null).
+   *
+   * POST /api/dialogs закрывает прежний активный диалог аккаунта. Если отправка
+   * сообщения и кнопка «Оставить заявку» создадут диалог одновременно, второй
+   * закроет первый, и сообщение в первый получит 409 «диалог закрыт». Поэтому
+   * все места, которым нужен новый диалог, ждут один общий запрос.
+   */
+  const creatingDialog = useRef<Promise<DialogWithMessages> | null>(null)
 
   const handleFailure = useCallback(
     (caught: unknown) => {
@@ -97,6 +141,8 @@ export default function ChatScreen({ debug, onSessionExpired }: Props) {
         const full = await api.getDialog(active.id)
         if (cancelled) return
         setDialog(full)
+        // После F5 возвращаем кнопку «Повторить», если последняя отправка не удалась.
+        setFailed(failedFromHistory(full.messages))
         await loadCard(active.id)
       } catch (caught) {
         if (!cancelled) handleFailure(caught)
@@ -116,6 +162,19 @@ export default function ChatScreen({ debug, onSessionExpired }: Props) {
   }, [dialog?.messages.length, pending, failed])
 
   const messages = dialog?.messages ?? []
+
+  // История в колонке зависит от id диалога и от того, есть ли в нём сообщения
+  // (превью — первая реплика). Остальные изменения ленты колонку не касаются.
+  const currentId = dialog?.id ?? null
+  const hasMessages = messages.length > 0
+  useEffect(() => {
+    if (!loading) onDialogState(currentId)
+  }, [loading, currentId, hasMessages, onDialogState])
+
+  // Сообщение из истории ещё обрабатывается: так бывает после F5 во время ожидания.
+  // Сам запрос оборвался вместе со страницей, но backend продолжает готовить ответ.
+  const lastMessage = messages[messages.length - 1]
+  const waiting = !sending && lastMessage?.role === 'user' && lastMessage.status === 'processing'
 
   const summaryDraft = useMemo(() => {
     const fromCore = [...messages]
@@ -137,19 +196,72 @@ export default function ChatScreen({ debug, onSessionExpired }: Props) {
     [],
   )
 
+  // Пока ждём ответ на сообщение из истории, перечитываем диалог. Остановимся, когда
+  // появится ответ или backend отметит сообщение как failed (тогда покажем «Повторить»).
+  const dialogId = dialog?.id
+  useEffect(() => {
+    if (!waiting || !dialogId) return
+    let cancelled = false
+    const timer = window.setInterval(async () => {
+      try {
+        const fresh = await api.getDialog(dialogId)
+        // Пользователь мог уже открыть другой диалог: устаревший ответ не применяем.
+        if (cancelled) return
+        setDialog(fresh)
+        setFailed(failedFromHistory(fresh.messages))
+        considerOffer(fresh, card)
+      } catch (caught) {
+        if (cancelled) return
+        if (caught instanceof ApiError && caught.status === 401) onSessionExpired()
+        // Прочие ошибки не показываем: следующая попытка будет через WAIT_POLL_MS.
+      }
+    }, WAIT_POLL_MS)
+    return () => {
+      cancelled = true
+      window.clearInterval(timer)
+    }
+  }, [waiting, dialogId, card, considerOffer, onSessionExpired])
+
+  /**
+   * Создаёт новый диалог ровно один раз на одновременные вызовы.
+   *
+   * Пока запрос идёт, повторный вызов возвращает тот же промис, и все вызывающие
+   * получают один и тот же диалог. Сброс карточки, этапа заявки и отказа от
+   * предложения выполняется здесь, один раз и до продолжения вызывающих: так
+   * кнопка заявки, дождавшись создания, откроет форму, и её не скроет отправка
+   * сообщения. Ошибку получает каждый вызывающий и обрабатывает сам; после
+   * ошибки ref очищается, и следующая попытка создаёт диалог заново.
+   */
+  function createDialogOnce(): Promise<DialogWithMessages> {
+    if (!creatingDialog.current) {
+      creatingDialog.current = api
+        .createDialog()
+        .then((created) => {
+          const fresh: DialogWithMessages = { ...created, messages: [] }
+          setDialog(fresh)
+          setCard(null)
+          setLeadStage('hidden')
+          declinedOffer.current = ''
+          return fresh
+        })
+        .finally(() => {
+          creatingDialog.current = null
+        })
+    }
+    return creatingDialog.current
+  }
+
   async function send(text: string, requestIdOverride?: string) {
-    if (sending) return
+    // Второе сообщение backend отклонит, пока не готов ответ на первое.
+    if (sending || waiting) return
     setError('')
     setFailed(null)
 
     let target = dialog
     try {
-      if (!target || target.status !== 'active') {
-        const created = await api.createDialog()
-        target = { ...created, messages: [] }
-        setDialog(target)
-        setCard(null)
-        setLeadStage('hidden')
+      // Диалог мог как раз создаваться по кнопке заявки: тогда используем его же.
+      if (!target || target.status !== 'active' || creatingDialog.current) {
+        target = await createDialogOnce()
       }
     } catch (caught) {
       handleFailure(caught)
@@ -204,26 +316,13 @@ export default function ChatScreen({ debug, onSessionExpired }: Props) {
     setFailed(null)
     try {
       // Пустой неиспользованный диалог не создаём заново: лишние записи засоряют архив.
-      if (dialog && dialog.messages.length === 0 && dialog.status === 'active') {
+      if (dialog && dialog.messages.length === 0 && dialog.status === 'active' && !creatingDialog.current) {
         setLeadStage('hidden')
         return
       }
-      const created = await api.createDialog()
-      setDialog({ ...created, messages: [] })
-      setCard(null)
-      setLeadStage('hidden')
-      declinedOffer.current = ''
-    } catch (caught) {
-      handleFailure(caught)
-    }
-  }
-
-  async function closeDialog() {
-    setAskClose(false)
-    if (!dialog) return
-    try {
-      await api.closeDialog(dialog.id)
-      setDialog(await api.getDialog(dialog.id))
+      // Если новый диалог уже создаётся (первое сообщение или кнопка заявки),
+      // второй не создаём: он закрыл бы первый, и отправка получила бы 409.
+      await createDialogOnce()
     } catch (caught) {
       handleFailure(caught)
     }
@@ -236,6 +335,44 @@ export default function ChatScreen({ debug, onSessionExpired }: Props) {
     else setLeadStage('form')
   }
 
+  /**
+   * Кнопка «Оставить заявку» в левой колонке работает всегда.
+   *
+   * Настоящее ядро не присылает action=offer_application, поэтому предложение
+   * в ленте может так и не появиться. Кнопка даёт путь к заявке в любой момент,
+   * в том числе до первого сообщения. Карточка в backend привязана к диалогу:
+   * если диалога ещё нет, создаём его (как при первом сообщении) и открываем
+   * форму. Для завершённого диалога backend карточку тоже принимает, поэтому
+   * новый диалог там не создаём. Если заявка уже создана, показываем её.
+   */
+  async function openLeadFromSide() {
+    // Пока диалог создаётся (например, только что нажали «Отправить»), dialog ещё
+    // null. Своё создание здесь закрыло бы тот диалог, поэтому ждём общий запрос.
+    if (dialog && !creatingDialog.current) {
+      openLead()
+      return
+    }
+    setError('')
+    try {
+      await createDialogOnce()
+      // Новый диалог: карточки у него нет, открываем пустую форму.
+      setLeadStage('form')
+    } catch (caught) {
+      handleFailure(caught)
+    }
+  }
+
+  // Нажатие в колонке выполняем после загрузки активного диалога: иначе «заявка»
+  // создала бы лишний диалог, а «новый диалог» спросил бы про ещё неизвестный.
+  useEffect(() => {
+    if (loading || !action) return
+    onActionHandled()
+    if (action === 'new-dialog') setAskNewDialog(true)
+    else void openLeadFromSide()
+    // openLeadFromSide читает текущее состояние; реагируем только на новое действие.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [action, loading])
+
   if (loading) {
     return <div className="boot" role="status">Загружаем диалог…</div>
   }
@@ -245,22 +382,6 @@ export default function ChatScreen({ debug, onSessionExpired }: Props) {
 
   return (
     <div className="chat">
-      <div className="chat-toolbar">
-        <button type="button" className="button button-ghost" onClick={() => setAskNewDialog(true)}>
-          Новый диалог
-        </button>
-        {dialog && !closed ? (
-          <button type="button" className="button button-ghost" onClick={() => setAskClose(true)}>
-            Завершить диалог
-          </button>
-        ) : null}
-        {dialog ? (
-          <button type="button" className="button button-outline" onClick={openLead}>
-            {card?.status === 'created' ? 'Моя заявка' : 'Оставить заявку'}
-          </button>
-        ) : null}
-      </div>
-
       {error ? (
         <p className="banner banner-error" role="alert">
           {error}
@@ -268,62 +389,80 @@ export default function ChatScreen({ debug, onSessionExpired }: Props) {
       ) : null}
 
       <div className="feed" aria-live="polite" aria-label="Переписка с консультантом">
-        {empty ? <StartSuggestions onPick={(text) => void send(text)} disabled={sending} /> : null}
+        <div className="feed-column">
+          {empty ? <StartSuggestions onPick={(text) => void send(text)} disabled={sending || waiting} /> : null}
 
-        {messages.map((message) => (
-          <div key={message.id}>
-            <MessageBubble message={message} debug={debug} />
-            {message.role === 'user' && message.status === 'failed' ? (
-              <p className="row-note">Сообщение сохранено, но ответ не получен.</p>
-            ) : null}
-          </div>
-        ))}
-
-        {pending ? (
-          <>
-            <article className="row row-user">
-              <div className="bubble bubble-user bubble-pending">
-                <p className="bubble-text">{pending}</p>
-                <p className="bubble-time">отправляем…</p>
-              </div>
-            </article>
-            <article className="row row-bot">
-              <div className="avatar" aria-hidden="true">E</div>
-              <div className="bubble bubble-bot">
-                <p className="typing" aria-label="Консультант готовит ответ">
-                  <span />
-                  <span />
-                  <span />
-                </p>
-              </div>
-            </article>
-          </>
-        ) : null}
-
-        {failed ? (
-          <article className="row row-bot">
-            <div className="avatar avatar-error" aria-hidden="true">!</div>
-            <div className="bubble bubble-error">
-              <p className="bubble-label">
-                {failed.technical ? 'Техническая ошибка' : 'Запрос не выполнен'}
-              </p>
-              <p className="bubble-text">{failed.text}</p>
-              <p className="bubble-note">
-                {failed.technical
-                  ? 'Это сбой сервиса, а не отсутствие информации в базе знаний.'
-                  : 'Проверьте данные и повторите отправку.'}
-              </p>
-              <button type="button" className="button button-primary" onClick={retry} disabled={sending}>
-                Повторить
-              </button>
+          {messages.map((message) => (
+            <div key={message.id} className="feed-item">
+              <MessageBubble message={message} debug={debug} />
+              {message.role === 'user' && message.status === 'failed' ? (
+                <p className="row-note">Сообщение сохранено, но ответ не получен.</p>
+              ) : null}
             </div>
-          </article>
-        ) : null}
+          ))}
 
-        <div ref={feedEnd} />
+          {pending || waiting ? (
+            <>
+              {/* Текст ожидающего сообщения после F5 уже есть в истории: дублировать не нужно. */}
+              {pending ? (
+                <article className="row row-user">
+                  <div className="bubble bubble-user bubble-pending">
+                    <p className="bubble-text">{pending}</p>
+                  </div>
+                </article>
+              ) : null}
+              <article className="row row-bot">
+                <div className="bubble bubble-bot">
+                  <p className="typing" aria-label="Консультант готовит ответ">
+                    <span />
+                    <span />
+                    <span />
+                  </p>
+                </div>
+              </article>
+            </>
+          ) : null}
+
+          {failed ? (
+            <article className="row row-bot">
+              <div className="bubble bubble-error">
+                <p className="bubble-label">
+                  {failed.technical ? 'Техническая ошибка' : 'Запрос не выполнен'}
+                </p>
+                <p className="bubble-text">{failed.text}</p>
+                <p className="bubble-note">
+                  {failed.technical
+                    ? 'Это сбой сервиса, а не отсутствие информации в базе знаний.'
+                    : 'Проверьте данные и повторите отправку.'}
+                </p>
+                <button type="button" className="chat-button chat-button-primary" onClick={retry} disabled={sending || waiting}>
+                  Повторить
+                </button>
+              </div>
+            </article>
+          ) : null}
+
+          {/* Предложение заявки по макету 20:712: показывается один раз, когда ядро
+              вернуло offer_application (см. considerOffer). */}
+          {leadStage === 'offer' ? (
+            <section className="offer" aria-label="Предложение оставить заявку">
+              <p className="offer-bubble">Хотите, передадим вашу задачу менеджеру?</p>
+              <div className="offer-actions">
+                <button type="button" className="chat-button chat-button-primary" onClick={() => setLeadStage('form')}>
+                  Оставить заявку
+                </button>
+                <button type="button" className="chat-button chat-button-light" onClick={() => setLeadStage('hidden')}>
+                  Не сейчас
+                </button>
+              </div>
+            </section>
+          ) : null}
+
+          <div ref={feedEnd} className="feed-end" />
+        </div>
       </div>
 
-      {dialog && leadStage !== 'hidden' ? (
+      {dialog && leadStage !== 'hidden' && leadStage !== 'offer' ? (
         <LeadPanel
           dialogId={dialog.id}
           stage={leadStage}
@@ -335,25 +474,15 @@ export default function ChatScreen({ debug, onSessionExpired }: Props) {
         />
       ) : null}
 
-      <Composer onSend={(text) => void send(text)} disabled={sending} closed={closed} />
+      <Composer onSend={(text) => void send(text)} disabled={sending || waiting} closed={closed} />
 
       {askNewDialog ? (
         <ConfirmModal
           title="Начать новый диалог?"
-          text="Текущий разговор уйдёт в историю, а консультант забудет его детали. Прежние сообщения останутся доступны в разделе «История»."
+          text="Текущий разговор уйдёт в историю, а консультант забудет его детали. Прежние сообщения останутся доступны в истории чатов."
           confirmLabel="Начать новый"
           onConfirm={() => void startNewDialog()}
           onCancel={() => setAskNewDialog(false)}
-        />
-      ) : null}
-
-      {askClose ? (
-        <ConfirmModal
-          title="Завершить диалог?"
-          text="Диалог уйдёт в историю и станет доступен только для чтения. Новый диалог можно начать в любой момент."
-          confirmLabel="Завершить"
-          onConfirm={() => void closeDialog()}
-          onCancel={() => setAskClose(false)}
         />
       ) : null}
     </div>

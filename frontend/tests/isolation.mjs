@@ -19,7 +19,7 @@ run.watch(pageA)
 await registerFresh(pageA, 'iso.a')
 
 await pageA.locator('#composer-input').fill('Секретный вопрос пользователя А про счётчики')
-await pageA.getByRole('button', { name: 'Отправить' }).click()
+await pageA.getByRole('button', { name: 'Отправить', exact: true }).click()
 // bubble-bot есть и у индикатора «печатает». Ждём текст завершённого ответа,
 // чтобы начать заполнение карточки после появления её черновика резюме.
 await pageA.waitForSelector('.row-bot .bubble-bot .bubble-text', { timeout: 30000 })
@@ -57,10 +57,13 @@ run.step('заявка создана', firstId.length > 10)
 
 // Повторное открытие карточки показывает ту же заявку, а не новую.
 await pageA.getByRole('button', { name: 'Свернуть' }).click()
-await pageA.getByRole('button', { name: 'Моя заявка' }).click()
+// Панели над чатом нет: созданную заявку показывает та же кнопка колонки «Оставить заявку».
+await pageA.getByRole('button', { name: 'Оставить заявку', exact: true }).click()
 await pageA.waitForSelector('.lead-done')
 const repeatedId = await pageA.locator('.lead-id').textContent()
 run.step('повторный заход показывает ту же заявку', repeatedId === firstId, repeatedId)
+// Окно заявки модальное: пока оно открыто, колонка за ним не нажимается. Закрываем.
+await pageA.getByRole('button', { name: 'Свернуть' }).click()
 
 // --- Пользователь B: своя история ---
 const contextB = await browser.newContext({ viewport: { width: 1280, height: 900 } })
@@ -71,18 +74,19 @@ await registerFresh(pageB, 'iso.b')
 const startVisible = await pageB.locator('.start').count()
 run.step('у нового пользователя пустой чат', startVisible === 1)
 
-await pageB.getByRole('button', { name: 'История' }).click()
-await pageB.waitForSelector('.screen', { timeout: 15000 })
-const foreignDialogs = await pageB.locator('.archive-item').count()
+// История — в левой колонке; диалог A узнаём по тексту его первого вопроса.
+const secret = 'Секретный вопрос пользователя А'
+await pageB.waitForTimeout(1500)
+const foreignDialogs = await pageB.locator('.sidebar-chat', { hasText: secret }).count()
 run.step('пользователь B не видит диалогов пользователя A', foreignDialogs === 0, `${foreignDialogs} записей`)
 
 const staffVisible = await pageB.getByRole('button', { name: 'Проверка' }).count()
 run.step('обычному пользователю раздел «Проверка» не показан', staffVisible === 0)
 
 // --- Пользователь A по-прежнему видит свой диалог ---
-await pageA.getByRole('button', { name: 'История' }).click()
-await pageA.waitForSelector('.archive-list', { timeout: 15000 })
-const ownDialogs = await pageA.locator('.archive-item').count()
+const own = pageA.locator('.sidebar-chat', { hasText: secret })
+await own.first().waitFor({ timeout: 15000 }).catch(() => undefined)
+const ownDialogs = await own.count()
 run.step('пользователь A видит свой диалог', ownDialogs >= 1, `${ownDialogs} записей`)
 
 await contextA.close()

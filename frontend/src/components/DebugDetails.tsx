@@ -1,5 +1,10 @@
 /**
- * Панель отладки одного ответа.
+ * Блок отладки одного ответа по макету Figma (кадр 19:488, слой 19:540).
+ *
+ * Верхние три строки повторяют макет: «Время ответа», «Документы базы знаний»
+ * (процитированные источники) и «Статус ответа». Ниже — технические сведения,
+ * которых нет в макете, но которые нужны для приёмки: действие ядра, число
+ * источников, идентификатор запроса, предупреждения.
  *
  * Сейчас backend отдаёт время ответа, процитированные источники, core_status,
  * warnings и missing_information. По плану кейса (док. 01 раздел 9) нужны ещё два
@@ -12,6 +17,21 @@
 
 import type { DebugChunk, Message } from '../api/types'
 import { formatElapsed } from '../lib/format'
+
+/** Статус ответа человеческими словами (в макете: «нужны уточнения»). */
+const STATUS_TEXT: Record<string, string> = {
+  answered: 'ответ дан',
+  clarification_needed: 'нужны уточнения',
+  insufficient_data: 'в базе знаний нет нужных сведений',
+  out_of_scope: 'вне темы консультации',
+}
+
+const ACTION_TEXT: Record<string, string> = {
+  answer: 'ответ дан',
+  clarify: 'нужны уточнения',
+  out_of_scope: 'вне темы консультации',
+  offer_application: 'предложена заявка',
+}
 
 function ChunkList({ title, chunks }: { title: string; chunks: DebugChunk[] }) {
   return (
@@ -36,14 +56,21 @@ export default function DebugDetails({ message }: { message: Message }) {
   const context = meta.context_chunks ?? []
   const timings = meta.timings ?? {}
 
+  // «Ценовые категории и тарифы» (раздел 2), «Пиковые часы потребления» — как в макете.
+  const documents = message.sources
+    .map((source) => `«${source.title}»${source.section ? ` (раздел ${source.section})` : ''}`)
+    .join(', ')
+  const status = (meta.core_status && STATUS_TEXT[meta.core_status])
+    || (meta.action && ACTION_TEXT[meta.action])
+    || 'нет данных'
+
   return (
     <div className="debug">
-      <p className="debug-title">Данные отладки</p>
+      <p className="debug-line"><b>Время ответа:</b> {formatElapsed(message.elapsed_ms)}</p>
+      <p className="debug-line"><b>Документы базы знаний:</b> {documents || 'нет'}</p>
+      <p className="debug-line"><b>Статус ответа:</b> {status}</p>
+
       <dl className="debug-grid">
-        <div>
-          <dt>Время ответа</dt>
-          <dd>{formatElapsed(message.elapsed_ms)}</dd>
-        </div>
         <div>
           <dt>Действие</dt>
           <dd>{meta.action ?? '—'}</dd>

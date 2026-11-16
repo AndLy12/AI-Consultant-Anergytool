@@ -18,7 +18,7 @@ run.watch(page, { consoleErrors: false })
 await registerFresh(page, 'validation')
 
 await page.locator('#composer-input').fill('Хотим снизить счета за электричество')
-await page.getByRole('button', { name: 'Отправить' }).click()
+await page.getByRole('button', { name: 'Отправить', exact: true }).click()
 await page.waitForSelector('.row-bot .bubble-bot', { timeout: 30000 })
 
 await page.getByRole('button', { name: 'Оставить заявку' }).click()
@@ -87,13 +87,17 @@ run.step('короткий номер: сказано сколько цифр н
 run.step('нет текста валидатора', !shortPhone.includes('Value error') && !shortPhone.includes('Invalid phone'))
 await run.shot(page, '17-validation-phone')
 
+// Решение владельца (этап 4): буквы в поле телефона не вводятся вовсе.
+// Раньше они попадали в поле и отклонялись подсказкой при отправке.
+await input('phone').fill('')
+await input('phone').pressSequentially('+7 (900) abc 000-00-01')
+run.step('буквы в номере не вводятся', (await input('phone').inputValue()) === '+7 (900)  000-00-01')
 await input('phone').fill('не телефон')
+run.step('вставка букв в номер тоже отфильтрована', !/[а-яa-z]/i.test(await input('phone').inputValue()))
+// Возвращаем ошибку у телефона: ниже проверяется, что она исчезает при исправлении.
+await input('phone').fill('12345')
 await page.getByRole('button', { name: 'Проверить карточку' }).click()
 await page.waitForSelector('#lead-phone-error')
-run.step(
-  'буквы в номере: перечислены допустимые знаки',
-  (await error('phone').textContent()).includes('Допустимы только цифры'),
-)
 
 // --- Остальные поля не потерялись ---
 run.step('ФИО сохранилось после ошибки', (await input('full_name').inputValue()) === 'Иванов Пётр Сергеевич')

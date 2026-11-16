@@ -6,7 +6,7 @@
  * Аккаунт reviewer@example.test с паролем TestPass12345 должен быть зарегистрирован.
  */
 
-import { BASE, createRun, launchBrowser } from './lib/harness.mjs'
+import { BASE, createRun, launchBrowser, submitAuth } from './lib/harness.mjs'
 
 const run = createRun('Экран сотрудника')
 const browser = await launchBrowser()
@@ -17,7 +17,8 @@ await page.goto(BASE)
 await page.waitForSelector('.auth-card')
 await page.getByLabel('Электронная почта').fill('reviewer@example.test')
 await page.getByLabel('Пароль').fill('TestPass12345')
-await page.getByRole('button', { name: 'Войти' }).click()
+// Вход сотрудника идёт последним в наборе: при лимите backend (429) ждём и повторяем.
+await submitAuth(page, 'Войти', '/api/auth/login')
 await page.waitForSelector('.chat', { timeout: 15000 })
 run.step('вход в существующий аккаунт', true)
 
