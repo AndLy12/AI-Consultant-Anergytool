@@ -15,6 +15,7 @@
 import { useEffect, useState } from 'react'
 import type { User } from '../api/types'
 import { loadDialogRows } from '../lib/dialogRows'
+import { formatDateTime } from '../lib/format'
 import type { DialogRow } from '../lib/dialogRows'
 import messageAddIcon from '../assets/icons/message-add.svg'
 import smsIcon from '../assets/icons/sms.svg'
@@ -31,8 +32,6 @@ type Props = {
   onLogout: () => void
   onNewDialog: () => void
   onLead: () => void
-  /** Заголовок «История чатов»: полный список диалогов с датами. */
-  onOpenHistory: () => void
   /** Пункт истории: активный диалог открывает чат, остальные — просмотр для чтения. */
   onOpenDialog: (row: DialogRow) => void
   onStaff: () => void
@@ -43,20 +42,35 @@ type Props = {
   onClose: () => void
 }
 
-/** Сколько диалогов показываем в колонке; полный список — по «История чатов». */
-const SIDEBAR_HISTORY_LIMIT = 20
+/**
+ * Для скольких последних диалогов дочитываем первую реплику (отдельный запрос
+ * на каждый: у backend нет превью). Отдельной страницы со списком больше нет,
+ * поэтому в колонке показываем ВСЕ диалоги — история всех сессий должна быть
+ * доступна по условию кейса. Более старые подписываем датой без запроса.
+ */
+const SIDEBAR_PREVIEW_LIMIT = 50
+
+/**
+ * Подпись пункта истории: первая реплика клиента. Для диалогов старше
+ * SIDEBAR_PREVIEW_LIMIT реплику не дочитывали, поэтому подписываем их датой,
+ * а не «Без сообщений», которое было бы неправдой.
+ */
+function rowLabel(row: DialogRow, index: number): string {
+  if (row.preview) return row.preview
+  return index < SIDEBAR_PREVIEW_LIMIT ? 'Без сообщений' : `Диалог от ${formatDateTime(row.dialog.created_at)}`
+}
 
 export default function Sidebar(props: Props) {
   const { user, highlightId, historyVersion, debug, onDebug, onLogout, onNewDialog, onLead } = props
-  const { onOpenHistory, onOpenDialog, onStaff, stub, demo, open, onClose } = props
+  const { onOpenDialog, onStaff, stub, demo, open, onClose } = props
   const [rows, setRows] = useState<DialogRow[]>([])
 
   useEffect(() => {
     let cancelled = false
     // Ошибка загрузки истории не мешает чату: список просто останется прежним.
-    loadDialogRows(SIDEBAR_HISTORY_LIMIT)
+    loadDialogRows(SIDEBAR_PREVIEW_LIMIT)
       .then((loaded) => {
-        if (!cancelled) setRows(loaded.slice(0, SIDEBAR_HISTORY_LIMIT))
+        if (!cancelled) setRows(loaded)
       })
       .catch(() => undefined)
     return () => {
@@ -96,12 +110,10 @@ export default function Sidebar(props: Props) {
 
         <hr className="sidebar-divider" />
 
-        {/* Заголовок нажимается: открывает полный список с датами (для длинной истории). */}
-        <button type="button" className="sidebar-history-title" onClick={onOpenHistory}>
-          История чатов
-        </button>
+        {/* Обычный заголовок: отдельной страницы со списком диалогов нет (решение владельца). */}
+        <h2 className="sidebar-history-title">История чатов</h2>
         <ul className="sidebar-history">
-          {rows.map((row) => (
+          {rows.map((row, index) => (
             <li key={row.dialog.id}>
               <button
                 type="button"
@@ -110,7 +122,7 @@ export default function Sidebar(props: Props) {
                 title={row.preview || undefined}
                 onClick={() => onOpenDialog(row)}
               >
-                {row.preview || 'Без сообщений'}
+                {rowLabel(row, index)}
               </button>
             </li>
           ))}

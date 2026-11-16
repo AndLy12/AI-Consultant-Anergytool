@@ -58,7 +58,7 @@ export default function App() {
   const [chatKey, setChatKey] = useState(0)
   /** Нажатие в колонке, которое должен выполнить экран чата. */
   const [chatAction, setChatAction] = useState<ChatAction | null>(null)
-  /** Диалог, открытый для чтения из пункта истории; undefined — показать список. */
+  /** Диалог, открытый для чтения из пункта истории; отдельной страницы-списка нет. */
   const [archiveOpenId, setArchiveOpenId] = useState<string | undefined>(undefined)
   const [archiveKey, setArchiveKey] = useState(0)
   /** Подсветка в истории: текущий диалог чата и диалог, открытый в архиве. */
@@ -127,17 +127,13 @@ export default function App() {
     setMenuOpen(false)
   }
 
-  function openHistoryList() {
-    setArchiveOpenId(undefined)
-    setArchiveKey((value) => value + 1)
-    setScreen('archive')
-    setMenuOpen(false)
-  }
-
   function openDialogFromHistory(row: DialogRow) {
     setMenuOpen(false)
-    // Активный диалог — это и есть текущий чат: открываем его с полем ввода.
-    if (row.dialog.status === 'active') {
+    // Диалог, открытый в чате, показываем в чате с полем ввода. Сверяем по id,
+    // а не по row.dialog.status: сразу после «Новый диалог» колонка ещё не
+    // перечитала список, и прежний диалог в ней числится активным, хотя backend
+    // его уже закрыл — по статусу он открылся бы как чат, а не для просмотра.
+    if (row.dialog.id === chatDialogId) {
       setScreen('chat')
       return
     }
@@ -175,7 +171,6 @@ export default function App() {
         onLogout={handleLogout}
         onNewDialog={() => requestChatAction('new-dialog')}
         onLead={() => requestChatAction('lead')}
-        onOpenHistory={openHistoryList}
         onOpenDialog={openDialogFromHistory}
         onStaff={() => {
           setScreen('staff')
@@ -212,7 +207,7 @@ export default function App() {
             onSessionExpired={handleSessionExpired}
           />
         )}
-        {screen === 'archive' && (
+        {screen === 'archive' && archiveOpenId && (
           <ArchiveScreen
             key={archiveKey}
             debug={debug}

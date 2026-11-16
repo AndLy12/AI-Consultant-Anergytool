@@ -74,18 +74,28 @@ await page.waitForSelector('.start', { timeout: 15000 })
 run.step('новый диалог очищает экран', (await page.locator('.row').count()) === 0)
 await run.shot(page, '07-new-dialog')
 
-await page.getByRole('button', { name: 'История' }).click()
-await page.waitForSelector('.archive-list', { timeout: 15000 })
-const archiveCount = await page.locator('.archive-item').count()
-run.step('прежний диалог в истории', archiveCount >= 1, `${archiveCount} записей`)
+// Отдельной страницы со списком диалогов нет: история — в левой колонке.
+const side = page.locator('.sidebar')
+run.step(
+  'страницы-списка нет: «История чатов» — заголовок, а не кнопка',
+  (await side.getByRole('button', { name: 'История чатов' }).count()) === 0 &&
+    (await side.getByRole('heading', { name: 'История чатов' }).count()) === 1,
+)
+// Колонка перечитывает историю асинхронно: ждём, пока появятся и новый пустой
+// диалог, и прежний — с первой репликой вместо «Без сообщений».
+await page.waitForFunction(() => document.querySelectorAll('.sidebar .sidebar-chat').length >= 2, null, { timeout: 15000 })
+const archived = side.locator('.sidebar-chat:not([aria-current])', { hasNotText: 'Без сообщений' })
+await archived.first().waitFor({ timeout: 15000 })
+const archiveCount = await archived.count()
+run.step('прежний диалог в истории слева', archiveCount >= 1, `${archiveCount} записей`)
 await run.shot(page, '08-archive')
 
-await page.locator('.archive-item').first().click()
+await archived.first().click()
 await page.waitForSelector('.feed-readonly', { timeout: 15000 })
 run.step('архивный диалог открыт только для чтения', (await page.locator('#composer-input').count()) === 0)
 await run.shot(page, '09-archive-dialog')
 
-await page.getByRole('button', { name: '← К списку' }).click()
+run.step('кнопки «← К списку» нет', (await page.getByRole('button', { name: '← К списку' }).count()) === 0)
 await page.getByRole('button', { name: '← К чату' }).click()
 await page.waitForSelector('.chat', { timeout: 15000 })
 run.step('после просмотра архива активный диалог пуст', (await page.locator('.start').count()) === 1)

@@ -74,18 +74,19 @@ await registerFresh(pageB, 'iso.b')
 const startVisible = await pageB.locator('.start').count()
 run.step('у нового пользователя пустой чат', startVisible === 1)
 
-await pageB.getByRole('button', { name: 'История' }).click()
-await pageB.waitForSelector('.screen', { timeout: 15000 })
-const foreignDialogs = await pageB.locator('.archive-item').count()
+// История — в левой колонке; диалог A узнаём по тексту его первого вопроса.
+const secret = 'Секретный вопрос пользователя А'
+await pageB.waitForTimeout(1500)
+const foreignDialogs = await pageB.locator('.sidebar-chat', { hasText: secret }).count()
 run.step('пользователь B не видит диалогов пользователя A', foreignDialogs === 0, `${foreignDialogs} записей`)
 
 const staffVisible = await pageB.getByRole('button', { name: 'Проверка' }).count()
 run.step('обычному пользователю раздел «Проверка» не показан', staffVisible === 0)
 
 // --- Пользователь A по-прежнему видит свой диалог ---
-await pageA.getByRole('button', { name: 'История' }).click()
-await pageA.waitForSelector('.archive-list', { timeout: 15000 })
-const ownDialogs = await pageA.locator('.archive-item').count()
+const own = pageA.locator('.sidebar-chat', { hasText: secret })
+await own.first().waitFor({ timeout: 15000 }).catch(() => undefined)
+const ownDialogs = await own.count()
 run.step('пользователь A видит свой диалог', ownDialogs >= 1, `${ownDialogs} записей`)
 
 await contextA.close()

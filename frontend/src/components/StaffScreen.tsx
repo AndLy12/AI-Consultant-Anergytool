@@ -84,6 +84,9 @@ export default function StaffScreen({ onBack, onSessionExpired }: Props) {
           {opened.status === 'active' ? 'активный' : 'архив'}
         </p>
         <div className="feed feed-readonly">
+          {/* Пустой диалог (открыт и не начат) иначе выглядел бы пустой областью
+              без пояснения — сотрудник не понял бы, загрузилось ли что-то. */}
+          {opened.messages.length === 0 ? <p className="empty">В диалоге нет сообщений.</p> : null}
           {opened.messages.map((message) => (
             <MessageBubble key={message.id} message={message} debug />
           ))}

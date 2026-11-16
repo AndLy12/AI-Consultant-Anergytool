@@ -31,9 +31,15 @@ await page.waitForSelector('.start', { timeout: 15000 })
 
 const side = page.locator('.sidebar')
 run.step('колонка: «Energytool»', (await side.locator('.brand-name').textContent()) === 'Energytool')
-for (const name of ['Новый диалог', 'Оставить заявку', 'История чатов', 'Выйти из аккаунта', 'Режим отладки']) {
+for (const name of ['Новый диалог', 'Оставить заявку', 'Выйти из аккаунта', 'Режим отладки']) {
   run.step(`колонка: кнопка «${name}»`, (await side.getByRole('button', { name, exact: true }).count()) === 1)
 }
+// Решение владельца: отдельной страницы со списком диалогов нет, заголовок не нажимается.
+run.step(
+  'колонка: «История чатов» — заголовок, а не кнопка',
+  (await side.getByRole('heading', { name: 'История чатов' }).count()) === 1 &&
+    (await side.getByRole('button', { name: 'История чатов' }).count()) === 0,
+)
 run.step('колонка: пункта «База знаний» нет', (await page.getByText('База знаний', { exact: true }).count()) === 0)
 const title = (await page.locator('.start-title').textContent()).trim()
 run.step('приветствие вечером: «Добрый вечер! Как я могу Вам помочь?»', title === 'Добрый вечер! Как я могу Вам помочь?', title)
@@ -99,9 +105,8 @@ run.step('текст предложения из макета', (await offer.tex
 await run.shot(page, '29-chat-offer')
 await offer.getByRole('button', { name: 'Не сейчас', exact: true }).click()
 run.step('«Не сейчас» скрывает предложение', (await offer.count()) === 0)
-// Тот же ответ при повторном чтении диалога (смена экрана) не должен вернуть предложение.
-await side.getByRole('button', { name: 'История чатов' }).click()
-await page.getByRole('button', { name: '← К чату' }).click()
+// Тот же ответ при повторном чтении диалога (чат открыт заново) не должен вернуть предложение.
+await page.reload()
 await page.waitForSelector('.chat', { timeout: 15000 })
 await page.waitForTimeout(500)
 run.step('предложение не повторяется для того же ответа после возврата в чат', (await page.locator('section.offer').count()) === 0)
@@ -133,7 +138,6 @@ run.step('390 px: нет горизонтальной прокрутки', !over
 
 // --- Окно заявки: в той же сессии, чтобы не создавать ещё один аккаунт ---
 await page.setViewportSize({ width: 1440, height: 1024 })
-await page.getByRole('button', { name: '← К списку' }).click()
 await page.getByRole('button', { name: '← К чату' }).click()
 await page.waitForSelector('.start', { timeout: 15000 })
 await checkLeadModal(page, run)

@@ -568,7 +568,8 @@ h2 {
   line-height: var(--lh-normal);
   color: var(--color-text);
   text-align: left;
-  cursor: pointer;
+  /* Заголовок больше не кнопка: без отступа снизу, как у прежней кнопки. */
+  margin-bottom: 0;
 }
 
 .sidebar-history {
@@ -1177,6 +1178,16 @@ h2 {
   line-height: var(--lh-normal);
   color: var(--color-black);
   resize: none;
+  /*
+   * Полосу прокрутки со стрелками не показываем: в одну строку она появлялась
+   * из-за отступов и выглядела лишней. Длинный текст по-прежнему прокручивается
+   * колёсиком, клавишами и касанием — скрыт только сам ползунок.
+   */
+  scrollbar-width: none;
+}
+
+.composer-input::-webkit-scrollbar {
+  display: none;
 }
 
 .composer-input::placeholder {
