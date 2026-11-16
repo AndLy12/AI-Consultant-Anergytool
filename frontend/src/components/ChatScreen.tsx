@@ -89,12 +89,19 @@ export default function ChatScreen({ debug, action, onActionHandled, onDialogSta
   const [card, setCard] = useState<Application | null>(null)
   const [leadStage, setLeadStage] = useState<LeadStage>('hidden')
   const [askNewDialog, setAskNewDialog] = useState(false)
-  /** Диалог создаётся ради заявки: блокируем повторное нажатие до ответа backend. */
-  const [creatingForLead, setCreatingForLead] = useState(false)
 
   // Предложение заявки не должно появляться снова после отказа пользователя.
   const declinedOffer = useRef<string>('')
   const feedEnd = useRef<HTMLDivElement>(null)
+  /**
+   * Создание диалога, которое сейчас выполняется (или null).
+   *
+   * POST /api/dialogs закрывает прежний активный диалог аккаунта. Если отправка
+   * сообщения и кнопка «Оставить заявку» создадут диалог одновременно, второй
+   * закроет первый, и сообщение в первый получит 409 «диалог закрыт». Поэтому
+   * все места, которым нужен новый диалог, ждут один общий запрос.
+   */
+  const creatingDialog = useRef<Promise<DialogWithMessages> | null>(null)
 
   const handleFailure = useCallback(
     (caught: unknown) => {
@@ -215,6 +222,35 @@ export default function ChatScreen({ debug, action, onActionHandled, onDialogSta
     }
   }, [waiting, dialogId, card, considerOffer, onSessionExpired])
 
+  /**
+   * Создаёт новый диалог ровно один раз на одновременные вызовы.
+   *
+   * Пока запрос идёт, повторный вызов возвращает тот же промис, и все вызывающие
+   * получают один и тот же диалог. Сброс карточки, этапа заявки и отказа от
+   * предложения выполняется здесь, один раз и до продолжения вызывающих: так
+   * кнопка заявки, дождавшись создания, откроет форму, и её не скроет отправка
+   * сообщения. Ошибку получает каждый вызывающий и обрабатывает сам; после
+   * ошибки ref очищается, и следующая попытка создаёт диалог заново.
+   */
+  function createDialogOnce(): Promise<DialogWithMessages> {
+    if (!creatingDialog.current) {
+      creatingDialog.current = api
+        .createDialog()
+        .then((created) => {
+          const fresh: DialogWithMessages = { ...created, messages: [] }
+          setDialog(fresh)
+          setCard(null)
+          setLeadStage('hidden')
+          declinedOffer.current = ''
+          return fresh
+        })
+        .finally(() => {
+          creatingDialog.current = null
+        })
+    }
+    return creatingDialog.current
+  }
+
   async function send(text: string, requestIdOverride?: string) {
     // Второе сообщение backend отклонит, пока не готов ответ на первое.
     if (sending || waiting) return
@@ -223,12 +259,9 @@ export default function ChatScreen({ debug, action, onActionHandled, onDialogSta
 
     let target = dialog
     try {
-      if (!target || target.status !== 'active') {
-        const created = await api.createDialog()
-        target = { ...created, messages: [] }
-        setDialog(target)
-        setCard(null)
-        setLeadStage('hidden')
+      // Диалог мог как раз создаваться по кнопке заявки: тогда используем его же.
+      if (!target || target.status !== 'active' || creatingDialog.current) {
+        target = await createDialogOnce()
       }
     } catch (caught) {
       handleFailure(caught)
@@ -283,15 +316,13 @@ export default function ChatScreen({ debug, action, onActionHandled, onDialogSta
     setFailed(null)
     try {
       // Пустой неиспользованный диалог не создаём заново: лишние записи засоряют архив.
-      if (dialog && dialog.messages.length === 0 && dialog.status === 'active') {
+      if (dialog && dialog.messages.length === 0 && dialog.status === 'active' && !creatingDialog.current) {
         setLeadStage('hidden')
         return
       }
-      const created = await api.createDialog()
-      setDialog({ ...created, messages: [] })
-      setCard(null)
-      setLeadStage('hidden')
-      declinedOffer.current = ''
+      // Если новый диалог уже создаётся (первое сообщение или кнопка заявки),
+      // второй не создаём: он закрыл бы первый, и отправка получила бы 409.
+      await createDialogOnce()
     } catch (caught) {
       handleFailure(caught)
     }
@@ -315,22 +346,19 @@ export default function ChatScreen({ debug, action, onActionHandled, onDialogSta
    * новый диалог там не создаём. Если заявка уже создана, показываем её.
    */
   async function openLeadFromSide() {
-    if (dialog) {
+    // Пока диалог создаётся (например, только что нажали «Отправить»), dialog ещё
+    // null. Своё создание здесь закрыло бы тот диалог, поэтому ждём общий запрос.
+    if (dialog && !creatingDialog.current) {
       openLead()
       return
     }
-    if (creatingForLead) return
-    setCreatingForLead(true)
     setError('')
     try {
-      const created = await api.createDialog()
-      setDialog({ ...created, messages: [] })
-      setCard(null)
+      await createDialogOnce()
+      // Новый диалог: карточки у него нет, открываем пустую форму.
       setLeadStage('form')
     } catch (caught) {
       handleFailure(caught)
-    } finally {
-      setCreatingForLead(false)
     }
   }
 
